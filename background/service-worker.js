@@ -385,6 +385,10 @@ async function processAIQueue() {
 
     console.log(`Processing AI queue: ${queue.length} items`);
 
+    // Fetch existing categories with usage counts for smarter AI categorization
+    const existingCategories = await storageManager.getCategoriesWithUsage();
+    console.log(`Loaded ${existingCategories.length} categories for AI context`);
+
     // Process in batches of 5
     const batchSize = 5;
     const batch = queue.slice(0, batchSize);
@@ -401,9 +405,9 @@ async function processAIQueue() {
           continue;
         }
 
-        // Categorize with AI
+        // Categorize with AI, passing existing categories for context
         console.log(`Categorizing interaction: ${interactionId}`);
-        const { categories, failureReason } = await aiCategorizer.categorizeContent(interaction);
+        const { categories, failureReason } = await aiCategorizer.categorizeContent(interaction, existingCategories);
 
         // Update interaction with categories
         await storageManager.updateInteraction(interactionId, {

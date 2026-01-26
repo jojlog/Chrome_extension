@@ -50,6 +50,7 @@
         </div>
 
         <div class="header-actions">
+          <button id="select-mode-btn" class="btn-secondary">Select</button>
           <select id="sort-select">
             <option value="date-desc">Newest First</option>
             <option value="date-asc">Oldest First</option>
@@ -63,6 +64,18 @@
 
       <div id="content-area" class="content-area">
         <div class="loading">Loading your saved content...</div>
+      </div>
+
+      <!-- Selection Action Bar (appears when items selected) -->
+      <div id="selection-bar" class="selection-bar hidden">
+        <div class="selection-info">
+          <span id="selection-count">0</span> items selected
+        </div>
+        <div class="selection-actions">
+          <button id="bulk-edit-categories" class="btn-primary">Edit Categories</button>
+          <button id="bulk-delete" class="btn-secondary delete">Delete</button>
+          <button id="cancel-selection" class="btn-secondary">Cancel</button>
+        </div>
       </div>
 
       <!-- Settings Modal -->
@@ -211,7 +224,8 @@
 
             <div class="form-group">
               <label>Suggested matches</label>
-              <input type="text" id="ai-suggested-filter" class="ai-filter-input" placeholder="Filter suggested matches...">
+              <input type="text" id="ai-suggested-filter" class="ai-filter-input"
+                placeholder="Filter suggested matches...">
               <div id="ai-suggested-list" class="ai-item-list"></div>
               <small>Review and uncheck anything you don’t want to include.</small>
             </div>

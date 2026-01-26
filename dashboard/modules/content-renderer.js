@@ -17,35 +17,126 @@ export class ContentRenderer {
         const list = document.getElementById('category-list');
         if (!list) return;
 
-        // Keep "All Categories"
-        list.innerHTML = `
-      <li data-category="all" class="${activeCategory === 'all' ? 'active' : ''}">
-        All Categories
-      </li>
-    `;
+        list.innerHTML = '';
 
-        categories.forEach(category => {
-            const li = document.createElement('li');
-            li.dataset.category = category;
-            li.textContent = category;
-            if (category === activeCategory) {
-                li.classList.add('active');
-            }
-
-            li.addEventListener('click', () => {
-                this.dashboardManager.setFilter('category', category);
-            });
-
-            list.appendChild(li);
+        // "All Categories" Item
+        const allLi = document.createElement('li');
+        allLi.dataset.category = 'all';
+        allLi.textContent = 'All Categories';
+        if (activeCategory === 'all') allLi.classList.add('active');
+        allLi.addEventListener('click', () => {
+            this.dashboardManager.setFilter('category', 'all');
         });
+        list.appendChild(allLi);
+
+        // Build Tree
+        const tree = {};
+        categories.forEach(cat => {
+            // Ignore "All Categories" if present in list
+            if (cat === 'all') return;
+
+            const parts = cat.split('/');
+            let current = tree;
+
+            parts.forEach((part, index) => {
+                if (!current[part]) {
+                    current[part] = {
+                        name: part,
+                        fullPath: parts.slice(0, index + 1).join('/'),
+                        children: {},
+                        count: 0
+                    };
+                }
+                // Mark if this specific path is an actual category in the list
+                // (e.g. "Tech" exists vs just "Tech/AI")
+                if (index === parts.length - 1) {
+                    current[part].isCategory = true;
+                }
+
+                current = current[part].children;
+            });
+        });
+
+        // Helper to check if node contains active category
+        const containsActive = (node) => {
+            if (node.fullPath === activeCategory) return true;
+            return Object.values(node.children).some(child => containsActive(child));
+        };
+
+        // Recursive Render
+        const renderTree = (nodes, container, level = 0) => {
+            Object.keys(nodes).sort().forEach(key => {
+                const node = nodes[key];
+                const hasChildren = Object.keys(node.children).length > 0;
+
+                const li = document.createElement('li');
+                li.className = 'category-item';
+                if (node.fullPath === activeCategory) li.classList.add('active');
+                if (hasChildren) li.classList.add('has-children');
+
+                const row = document.createElement('div');
+                row.className = 'category-row';
+                row.style.paddingLeft = `${20 + (level * 15)}px`; // Indent based on level
+
+                // Toggle Button (if children)
+                if (hasChildren) {
+                    const toggle = document.createElement('span');
+                    toggle.className = 'category-toggle';
+                    toggle.innerHTML = '▶'; // Chevron right
+                    toggle.onclick = (e) => {
+                        e.stopPropagation();
+                        li.classList.toggle('expanded');
+                        toggle.innerHTML = li.classList.contains('expanded') ? '▼' : '▶';
+                    };
+
+                    // Auto-expand if active category is inside
+                    if (containsActive(node)) {
+                        li.classList.add('expanded');
+                        toggle.innerHTML = '▼';
+                    }
+
+                    row.appendChild(toggle);
+                } else {
+                    const spacer = document.createElement('span');
+                    spacer.className = 'category-spacer';
+                    row.appendChild(spacer);
+                }
+
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'category-name';
+                nameSpan.textContent = node.name;
+                row.appendChild(nameSpan);
+
+                // Row Click - Filter
+                row.addEventListener('click', () => {
+                    this.dashboardManager.setFilter('category', node.fullPath);
+                });
+
+                li.appendChild(row);
+
+                // Render Children
+                if (hasChildren) {
+                    const childUl = document.createElement('ul');
+                    childUl.className = 'category-children';
+                    renderTree(node.children, childUl, level + 1);
+                    li.appendChild(childUl);
+                }
+
+                container.appendChild(li);
+            });
+        };
+
+        renderTree(tree, list);
     }
 
     /**
      * Render content items
      * @param {Array} items 
      * @param {string} viewMode 
+     * @param {boolean} selectMode
+     * @param {Set} selectedItems
      */
-    renderContent(items, viewMode) {
+    renderContent(items, viewMode, selectMode = false, selectedItems = new Set()) {
         const container = document.getElementById('content-area');
         if (!container) return;
 
@@ -62,7 +153,7 @@ export class ContentRenderer {
         wrapper.className = viewMode === 'grid' ? 'content-grid' : 'content-list';
 
         items.forEach(item => {
-            const card = this.createContentCard(item, viewMode);
+            const card = this.createContentCard(item, viewMode, selectMode, selectedItems.has(item.id));
             wrapper.appendChild(card);
         });
 
@@ -72,12 +163,28 @@ export class ContentRenderer {
     /**
      * Create a content card element
      * @param {Object} item 
+     * @param {string} viewMode
+     * @param {boolean} selectMode
+     * @param {boolean} isSelected
      * @returns {HTMLElement}
      */
-    createContentCard(item, viewMode) {
+    createContentCard(item, viewMode, selectMode = false, isSelected = false) {
         const card = document.createElement('div');
         card.className = 'content-card';
         card.dataset.id = item.id;
+
+        // Add selection classes
+        if (selectMode) {
+            card.classList.add('selectable');
+            if (isSelected) {
+                card.classList.add('selected');
+            }
+        }
+
+        // Add checkbox for selection mode
+        const checkbox = document.createElement('div');
+        checkbox.className = 'card-checkbox';
+        card.appendChild(checkbox);
 
         // Header: Platform icon + Date + Actions
         const header = document.createElement('div');
@@ -212,9 +319,11 @@ export class ContentRenderer {
         footer.appendChild(authorSection);
         footer.appendChild(categories);
 
-        // Click whole card to open link
-        card.addEventListener('click', () => {
-            if (item.content.url) {
+        // Click whole card to open link or select
+        card.addEventListener('click', (e) => {
+            if (selectMode) {
+                this.dashboardManager.toggleItemSelection(item.id);
+            } else if (item.content.url) {
                 chrome.tabs.create({ url: item.content.url });
             }
         });

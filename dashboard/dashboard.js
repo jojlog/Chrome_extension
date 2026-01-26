@@ -35,6 +35,10 @@ class DashboardManager {
       sensitivity: 50
     };
 
+    // Bulk selection mode
+    this.selectMode = false;
+    this.selectedItems = new Set();
+
     this.init();
   }
 
@@ -112,8 +116,13 @@ class DashboardManager {
     // Sort
     const sorted = this.filtersManager.sortContent(filtered, this.currentFilters.sort);
 
-    // Render
-    this.contentRenderer.renderContent(sorted, this.viewMode);
+    // Render (pass selectMode and selectedItems)
+    this.contentRenderer.renderContent(sorted, this.viewMode, this.selectMode, this.selectedItems);
+
+    // Update selection bar if in select mode
+    if (this.selectMode) {
+      this.updateSelectionBar();
+    }
   }
 
   // --- Actions ---
@@ -829,6 +838,183 @@ class DashboardManager {
       this.aiFilters.sensitivity = value;
       this.updateSimilarityLabel(value);
     });
+
+    // Bulk Selection Mode
+    document.getElementById('select-mode-btn')?.addEventListener('click', () => {
+      this.toggleSelectMode();
+    });
+
+    document.getElementById('bulk-edit-categories')?.addEventListener('click', () => {
+      this.openBulkEditCategoriesModal();
+    });
+
+    document.getElementById('bulk-delete')?.addEventListener('click', () => {
+      this.bulkDeleteSelected();
+    });
+
+    document.getElementById('cancel-selection')?.addEventListener('click', () => {
+      this.exitSelectMode();
+    });
+  }
+
+  // --- Bulk Selection Methods ---
+
+  toggleSelectMode() {
+    this.selectMode = !this.selectMode;
+    this.selectedItems.clear();
+
+    const btn = document.getElementById('select-mode-btn');
+    const selectionBar = document.getElementById('selection-bar');
+
+    if (this.selectMode) {
+      btn?.classList.add('active');
+      btn.textContent = 'Cancel';
+    } else {
+      btn?.classList.remove('active');
+      btn.textContent = 'Select';
+      selectionBar?.classList.add('hidden');
+    }
+
+    this.filterAndDisplayContent();
+  }
+
+  exitSelectMode() {
+    this.selectMode = false;
+    this.selectedItems.clear();
+
+    const btn = document.getElementById('select-mode-btn');
+    const selectionBar = document.getElementById('selection-bar');
+
+    btn?.classList.remove('active');
+    btn.textContent = 'Select';
+    selectionBar?.classList.add('hidden');
+
+    this.filterAndDisplayContent();
+  }
+
+  toggleItemSelection(itemId) {
+    if (this.selectedItems.has(itemId)) {
+      this.selectedItems.delete(itemId);
+    } else {
+      this.selectedItems.add(itemId);
+    }
+
+    // Update card visual state
+    const card = document.querySelector(`.content-card[data-id="${itemId}"]`);
+    card?.classList.toggle('selected', this.selectedItems.has(itemId));
+
+    this.updateSelectionBar();
+  }
+
+  updateSelectionBar() {
+    const selectionBar = document.getElementById('selection-bar');
+    const countEl = document.getElementById('selection-count');
+
+    if (this.selectedItems.size > 0) {
+      selectionBar?.classList.remove('hidden');
+      if (countEl) countEl.textContent = this.selectedItems.size;
+    } else {
+      selectionBar?.classList.add('hidden');
+    }
+  }
+
+  async openBulkEditCategoriesModal() {
+    if (this.selectedItems.size === 0) {
+      alert('No items selected.');
+      return;
+    }
+
+    // Use the modals manager to show bulk edit modal
+    this.modalsManager.showBulkEditCategoriesModal(
+      Array.from(this.selectedItems),
+      this.userCategories
+    );
+  }
+
+  async bulkUpdateCategories(itemIds, categories, mode = 'replace') {
+    const updates = [];
+
+    for (const id of itemIds) {
+      const item = this.itemsById.get(id);
+      if (!item) continue;
+
+      let newCategories;
+      if (mode === 'replace') {
+        newCategories = [...categories];
+      } else if (mode === 'add') {
+        const existing = (item.categories || []).filter(c => c !== 'Uncategorized');
+        newCategories = [...new Set([...existing, ...categories])];
+      }
+
+      updates.push({ id, categories: newCategories });
+    }
+
+    if (updates.length === 0) return;
+
+    // Optimistic update
+    updates.forEach(update => {
+      const itemIndex = this.allItems.findIndex(i => i.id === update.id);
+      if (itemIndex !== -1) {
+        this.allItems[itemIndex].categories = update.categories;
+        this.itemsById.set(update.id, this.allItems[itemIndex]);
+      }
+    });
+
+    this.filterAndDisplayContent();
+    this.loadCategoriesFromContent();
+
+    // Send updates to storage
+    const results = await Promise.all(
+      updates.map(update => chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: update.id,
+        updates: { categories: update.categories }
+      }))
+    );
+
+    const failures = results.filter(result => !result?.success);
+    if (failures.length) {
+      console.error('Some bulk updates failed:', failures);
+      alert(`${failures.length} items failed to update. Reloading to sync.`);
+      this.loadContent();
+    }
+
+    // Exit select mode after successful operation
+    this.exitSelectMode();
+  }
+
+  async bulkDeleteSelected() {
+    if (this.selectedItems.size === 0) {
+      alert('No items selected.');
+      return;
+    }
+
+    const confirmed = confirm(`Delete ${this.selectedItems.size} selected items? This cannot be undone.`);
+    if (!confirmed) return;
+
+    const itemIds = Array.from(this.selectedItems);
+    let successCount = 0;
+
+    for (const id of itemIds) {
+      try {
+        const response = await chrome.runtime.sendMessage({
+          type: 'DELETE_INTERACTION',
+          id
+        });
+
+        if (response?.success) {
+          this.allItems = this.allItems.filter(item => item.id !== id);
+          this.itemsById.delete(id);
+          successCount++;
+        }
+      } catch (error) {
+        console.error('Error deleting item:', id, error);
+      }
+    }
+
+    alert(`Deleted ${successCount} of ${itemIds.length} items.`);
+    this.exitSelectMode();
+    this.filterAndDisplayContent();
   }
 }
 

@@ -1,4 +1,5 @@
 import { PREDEFINED_CATEGORIES } from '../../lib/constants.js';
+import { CategorySelector } from './category-selector.js';
 
 /**
  * Modals Manager - Handles settings and edit dialogs
@@ -7,6 +8,7 @@ export class ModalsManager {
     constructor(dashboardManager) {
         this.dashboardManager = dashboardManager;
         this.activeEditItem = null;
+        this.categorySelector = null;
         this.setupModalListeners();
     }
 
@@ -143,13 +145,14 @@ export class ModalsManager {
             <button id="close-edit-cats" class="btn-close">&times;</button>
           </div>
           <div class="modal-body">
+            <label class="form-label">Current Categories</label>
             <div class="current-tags" id="edit-modal-tags"></div>
-            <div class="add-tag-form">
-              <input type="text" id="add-tag-input" placeholder="Add category...">
-              <button id="add-tag-btn" class="btn-secondary">Add</button>
-            </div>
+            
+            <label class="form-label">Add Category</label>
+            <div id="category-selector-container"></div>
+            
             <div class="suggested-tags">
-              <h4>Suggested</h4>
+              <h4>Frequently Used</h4>
               <div id="suggested-tags-list" class="tags-cloud"></div>
             </div>
           </div>
@@ -167,14 +170,33 @@ export class ModalsManager {
         document.getElementById('close-edit-cats').onclick = () => this.hideEditCategoriesModal();
         document.getElementById('cancel-edit-cats').onclick = () => this.hideEditCategoriesModal();
         document.getElementById('save-edit-cats').onclick = () => this.saveEditedCategories();
-        document.getElementById('add-tag-btn').onclick = () => this.addNewEditCategory();
+
+        // Initialize CategorySelector
+        const selectorContainer = document.getElementById('category-selector-container');
+        this.categorySelector = new CategorySelector({
+            container: selectorContainer,
+            placeholder: 'Search or type new category...',
+            showUsageCount: true,
+            onSelect: (category) => {
+                this.addCategoryTag(document.getElementById('edit-modal-tags'), category.name);
+                this.updateSuggestionsVisibility();
+            },
+            onCreateNew: async (category) => {
+                // Save new category to user categories
+                await this.dashboardManager.ensureUserCategory(category.name);
+            }
+        });
     }
 
-    showEditCategoriesModal(item, userCategories) {
+    async showEditCategoriesModal(item, userCategories) {
         this.createEditCategoriesModal();
         this.activeEditItem = item;
+        this.activeEditItems = null;
 
         const modal = document.getElementById('edit-categories-modal');
+        const title = modal.querySelector('.modal-header h2');
+        if (title) title.textContent = 'Edit Categories';
+
         const tagsContainer = document.getElementById('edit-modal-tags');
         tagsContainer.innerHTML = '';
 
@@ -182,26 +204,59 @@ export class ModalsManager {
         const currentCats = item.categories || [];
         currentCats.forEach(cat => this.addCategoryTag(tagsContainer, cat));
 
-        // Render suggestions (Predefined + User)
-        const allSuggestions = [...new Set([...PREDEFINED_CATEGORIES, ...userCategories])].sort();
+        // Get categories with usage counts for the selector
+        let categoriesWithUsage = [];
+        try {
+            categoriesWithUsage = await this.dashboardManager.storage.getCategoriesWithUsage();
+        } catch (e) {
+            // Fallback to simple list
+            const allCats = [...new Set([...PREDEFINED_CATEGORIES, ...userCategories])];
+            categoriesWithUsage = allCats.map(name => ({ name, usageCount: 0 }));
+        }
 
+        // Filter out already selected categories for selector
+        const availableCategories = categoriesWithUsage.filter(cat => !currentCats.includes(cat.name));
+
+        // Update the CategorySelector
+        if (this.categorySelector) {
+            this.categorySelector.setCategories(availableCategories);
+            this.categorySelector.clear();
+        }
+
+        // Render top suggestions (most used categories not already selected)
         const suggestionsContainer = document.getElementById('suggested-tags-list');
         suggestionsContainer.innerHTML = '';
 
-        allSuggestions.forEach(cat => {
-            if (!currentCats.includes(cat)) {
-                const tag = document.createElement('span');
-                tag.className = 'suggested-tag';
-                tag.textContent = cat;
-                tag.onclick = () => {
-                    this.addCategoryTag(tagsContainer, cat);
-                    tag.remove();
-                };
-                suggestionsContainer.appendChild(tag);
-            }
+        const topSuggestions = categoriesWithUsage
+            .filter(cat => !currentCats.includes(cat.name) && cat.usageCount > 0)
+            .slice(0, 15);
+
+        topSuggestions.forEach(cat => {
+            const tag = document.createElement('span');
+            tag.className = 'suggested-tag';
+            tag.textContent = cat.usageCount > 0 ? `${cat.name} (${cat.usageCount})` : cat.name;
+            tag.dataset.name = cat.name;
+            tag.onclick = () => {
+                this.addCategoryTag(tagsContainer, cat.name);
+                tag.remove();
+                this.updateSuggestionsVisibility();
+            };
+            suggestionsContainer.appendChild(tag);
         });
 
+        this.updateSuggestionsVisibility();
         modal.classList.remove('hidden');
+    }
+
+    /**
+     * Update suggestions section visibility based on available items
+     */
+    updateSuggestionsVisibility() {
+        const suggestionsContainer = document.getElementById('suggested-tags-list');
+        const suggestionsSection = suggestionsContainer?.closest('.suggested-tags');
+        if (suggestionsSection) {
+            suggestionsSection.style.display = suggestionsContainer.children.length > 0 ? 'block' : 'none';
+        }
     }
 
     addCategoryTag(container, name) {
@@ -216,33 +271,89 @@ export class ModalsManager {
         const removeBtn = document.createElement('span');
         removeBtn.className = 'remove-tag';
         removeBtn.innerHTML = '&times;';
-        removeBtn.onclick = () => span.remove();
+        removeBtn.onclick = () => {
+            span.remove();
+            // Re-add to suggestions if applicable
+            this.updateSuggestionsVisibility();
+        };
 
         span.appendChild(removeBtn);
         container.appendChild(span);
     }
 
-    addNewEditCategory() {
-        const input = document.getElementById('add-tag-input');
-        const val = input.value.trim();
-        if (val) {
-            this.addCategoryTag(document.getElementById('edit-modal-tags'), val);
-            input.value = '';
-        }
-    }
-
     hideEditCategoriesModal() {
         document.getElementById('edit-categories-modal')?.classList.add('hidden');
         this.activeEditItem = null;
+        this.activeEditItems = null;
     }
 
     async saveEditedCategories() {
-        if (!this.activeEditItem) return;
-
         const container = document.getElementById('edit-modal-tags');
         const newCategories = [...container.children].map(el => el.dataset.val);
 
-        await this.dashboardManager.updateItemCategories(this.activeEditItem.id, newCategories);
+        if (this.activeEditItem) {
+            // Single Item Edit
+            await this.dashboardManager.updateItemCategories(this.activeEditItem.id, newCategories);
+        } else if (this.activeEditItems && this.activeEditItems.length > 0) {
+            // Bulk Edit
+            await this.dashboardManager.bulkUpdateCategories(this.activeEditItems, newCategories, 'replace');
+        }
+
         this.hideEditCategoriesModal();
+    }
+
+    async showBulkEditCategoriesModal(itemIds, userCategories) {
+        this.createEditCategoriesModal();
+        this.activeEditItem = null;
+        this.activeEditItems = itemIds;
+
+        const modal = document.getElementById('edit-categories-modal');
+        const title = modal.querySelector('.modal-header h2');
+        if (title) title.textContent = `Bulk Edit (${itemIds.length} items)`;
+
+        const tagsContainer = document.getElementById('edit-modal-tags');
+        tagsContainer.innerHTML = '';
+
+        // For bulk edit, we start empty (Replace mode) or we could calculate intersection
+        // Starting empty is safer for 'Replace' mode
+
+        // Get categories with usage counts for the selector
+        let categoriesWithUsage = [];
+        try {
+            categoriesWithUsage = await this.dashboardManager.storage.getCategoriesWithUsage();
+        } catch (e) {
+            const allCats = [...new Set([...PREDEFINED_CATEGORIES, ...userCategories])];
+            categoriesWithUsage = allCats.map(name => ({ name, usageCount: 0 }));
+        }
+
+        // Update the CategorySelector
+        if (this.categorySelector) {
+            this.categorySelector.setCategories(categoriesWithUsage);
+            this.categorySelector.clear();
+        }
+
+        // Render top suggestions
+        const suggestionsContainer = document.getElementById('suggested-tags-list');
+        suggestionsContainer.innerHTML = '';
+
+        const topSuggestions = categoriesWithUsage
+            .filter(cat => cat.usageCount > 0)
+            .slice(0, 15);
+
+        topSuggestions.forEach(cat => {
+            const tag = document.createElement('span');
+            tag.className = 'suggested-tag';
+            tag.textContent = cat.usageCount > 0 ? `${cat.name} (${cat.usageCount})` : cat.name;
+            tag.dataset.name = cat.name;
+            tag.onclick = () => {
+                this.addCategoryTag(tagsContainer, cat.name);
+                // Don't remove from suggestions in bulk mode as it might be re-added
+                this.updateSuggestionsVisibility();
+            };
+            suggestionsContainer.appendChild(tag);
+        });
+
+        this.updateSuggestionsVisibility();
+        modal.classList.remove('hidden');
     }
 }
