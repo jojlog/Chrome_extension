@@ -1,4 +1,20 @@
 // Instagram Tracker - Tracks interactions on Instagram
+
+// Defensive checks for required dependencies (these are window.* because classes attach themselves there)
+if (!window.BasePlatformTracker) {
+  throw new Error('InstagramTracker: BasePlatformTracker not loaded. Check script order in manifest.json');
+}
+if (!window.ContentExtractor) {
+  throw new Error('InstagramTracker: ContentExtractor not loaded. Check script order in manifest.json');
+}
+if (!window.InstagramSelectors) {
+  throw new Error('InstagramTracker: InstagramSelectors not loaded. Check script order in manifest.json');
+}
+
+// NOTE: BasePlatformTracker, ContentExtractor, and InstagramSelectors are already
+// declared as classes in their source files which run before this file.
+// They are also attached to window.* for reference. Use the class names directly.
+
 class InstagramTracker extends BasePlatformTracker {
   constructor() {
     super('instagram');
@@ -207,7 +223,7 @@ class InstagramTracker extends BasePlatformTracker {
    */
   isPostElement(element) {
     return element.tagName === 'ARTICLE' ||
-           (element.tagName === 'DIV' && element.getAttribute('role') === 'dialog');
+      (element.tagName === 'DIV' && element.getAttribute('role') === 'dialog');
   }
 
   /**
@@ -293,6 +309,46 @@ class InstagramTracker extends BasePlatformTracker {
       comments: comments,
       shares: 0 // Instagram doesn't show share count publicly
     };
+  }
+
+  /**
+   * Extract the currently logged-in user on Instagram
+   * @returns {Object|null} User info
+   */
+  extractLoggedInUser() {
+    try {
+      // Try profile link in bottom nav (mobile) or side nav
+      const profileLinks = document.querySelectorAll('nav a[href^="/"]');
+      for (const link of profileLinks) {
+        const href = link.getAttribute('href');
+        // Profile links are typically just /{username}/ without /p/ or /explore/ etc
+        if (href && !href.includes('/p/') && !href.includes('/explore/') &&
+          !href.includes('/reels/') && !href.includes('/direct/') &&
+          !href.includes('/accounts/') && href !== '/') {
+          const username = href.replace(/\//g, '').trim();
+          if (username && username.length > 0 && !username.includes(' ')) {
+            // Check if this link has a profile image (more likely to be profile link)
+            const hasProfileImg = link.querySelector('img[alt*="profile"]') ||
+              link.closest('[role="link"]')?.querySelector('img');
+            if (hasProfileImg || link.getAttribute('aria-label')?.toLowerCase().includes('profile')) {
+              return { username, fullName: null, id: null };
+            }
+          }
+        }
+      }
+
+      // Fallback: Check for username in URL if on profile page
+      const urlMatch = window.location.pathname.match(/^\/([^\/]+)\/?$/);
+      if (urlMatch && urlMatch[1] && !['explore', 'reels', 'direct', 'accounts'].includes(urlMatch[1])) {
+        // This might be viewing someone else's profile, not necessarily logged-in user
+        // So we return null here as it's not reliable
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error extracting logged-in user:', error);
+      return null;
+    }
   }
 }
 

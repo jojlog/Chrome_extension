@@ -1,4 +1,18 @@
-// Twitter/X Tracker - Tracks interactions on Twitter
+// Twitter Tracker - Tracks interactions on Twitter/X
+
+// Defensive checks for required dependencies
+if (!window.BasePlatformTracker) {
+  throw new Error('TwitterTracker: BasePlatformTracker not loaded. Check script order in manifest.json');
+}
+if (!window.ContentExtractor) {
+  throw new Error('TwitterTracker: ContentExtractor not loaded. Check script order in manifest.json');
+}
+if (!window.TwitterSelectors) {
+  throw new Error('TwitterTracker: TwitterSelectors not loaded. Check script order in manifest.json');
+}
+
+// NOTE: Classes are already declared in their source files which run before this file.
+
 class TwitterTracker extends BasePlatformTracker {
   constructor() {
     super('twitter');
@@ -183,7 +197,7 @@ class TwitterTracker extends BasePlatformTracker {
    */
   findPostElement(button) {
     return button.closest('article[data-testid="tweet"]') ||
-           button.closest('article[role="article"]');
+      button.closest('article[role="article"]');
   }
 
   /**
@@ -226,8 +240,8 @@ class TwitterTracker extends BasePlatformTracker {
    */
   isPostElement(element) {
     return element.tagName === 'ARTICLE' &&
-           (element.getAttribute('data-testid') === 'tweet' ||
-            element.getAttribute('role') === 'article');
+      (element.getAttribute('data-testid') === 'tweet' ||
+        element.getAttribute('role') === 'article');
   }
 
   /**
@@ -322,6 +336,50 @@ class TwitterTracker extends BasePlatformTracker {
       comments: replies,
       shares: retweets
     };
+  }
+
+  /**
+   * Extract the currently logged-in user on Twitter/X
+   * @returns {Object|null} User info
+   */
+  extractLoggedInUser() {
+    try {
+      // Try account switcher button (most reliable)
+      const accountButton = document.querySelector('[data-testid="SideNav_AccountSwitcher_Button"]');
+      if (accountButton) {
+        // The button contains avatar and username info
+        const usernameSpan = accountButton.querySelector('div[dir="ltr"] span');
+        const displayNameSpan = accountButton.querySelector('div[dir="auto"] span');
+
+        if (usernameSpan) {
+          const username = usernameSpan.textContent?.replace('@', '').trim();
+          const fullName = displayNameSpan?.textContent?.trim();
+
+          if (username) {
+            return {
+              username: username,
+              fullName: fullName || null,
+              id: null // Twitter doesn't expose user ID in DOM easily
+            };
+          }
+        }
+      }
+
+      // Fallback: Try profile link in nav
+      const profileLink = document.querySelector('nav a[href^="/"][data-testid="AppTabBar_Profile_Link"]');
+      if (profileLink) {
+        const href = profileLink.getAttribute('href');
+        const username = href?.replace('/', '').trim();
+        if (username) {
+          return { username, fullName: null, id: null };
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error extracting logged-in user:', error);
+      return null;
+    }
   }
 }
 

@@ -1,4 +1,22 @@
 // Base Tracker - Abstract base class for platform-specific trackers
+// Base Tracker - Abstract base class for platform-specific trackers
+
+// NOTE: Cannot use imports in content scripts without build step or type="module" in manifest
+// MESSAGE_TYPES is intentionally duplicated here from lib/constants.js because content scripts
+// cannot use ES module imports. Keep this in sync with lib/constants.js if adding new types.
+const MESSAGE_TYPES = {
+  SAVE_INTERACTION: 'SAVE_INTERACTION',
+  GET_INTERACTIONS: 'GET_INTERACTIONS',
+  GET_INTERACTION_BY_ID: 'GET_INTERACTION_BY_ID',
+  UPDATE_INTERACTION: 'UPDATE_INTERACTION',
+  DELETE_INTERACTION: 'DELETE_INTERACTION',
+  PING: 'PING',
+  GET_CURRENT_TAB_ID: 'GET_CURRENT_TAB_ID'
+};
+
+// NOTE: ContentExtractor is already declared as a class in content-extractor.js
+// which runs before this file. Use window.ContentExtractor directly if needed.
+
 class BasePlatformTracker {
   constructor(platformName) {
     this.platform = platformName;
@@ -154,12 +172,16 @@ class BasePlatformTracker {
       const content = this.extractContent(postElement);
       const metadata = this.extractMetadata(postElement);
       const viewDuration = this.timeTracker ? this.timeTracker.getDuration(postId) : 0;
+      // Get logged-in user info
+      const loggedInUser = this.extractLoggedInUser();
+
       const interaction = {
         id: ContentExtractor.generatePostId(this.platform, content.url, content.text),
         platform: this.platform,
         interactionType: type,
         timestamp: Date.now(),
         viewDuration: viewDuration,
+        savedBy: loggedInUser,  // NEW: Track which user account saved this
         content: content,
         metadata: metadata,
         categories: [],
@@ -170,104 +192,71 @@ class BasePlatformTracker {
       };
 
       // Ensure service worker is active before sending message
-      let retries = 3;
       let saveSuccess = false;
-      while (retries > 0) {
+      const MAX_RETRIES = 3;
+
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
           const response = await chrome.runtime.sendMessage({
-            type: 'SAVE_INTERACTION',
+            type: MESSAGE_TYPES.SAVE_INTERACTION,
             data: interaction
           });
+
           if (response && response.success) {
             console.log(`${this.platform}: Successfully saved ${type} interaction`);
             saveSuccess = true;
-            this.pendingSaves.delete(saveKey); // Clear pending save on success
+            this.pendingSaves.delete(saveKey);
 
-            // Show immediate success popup (AI categorization pending)
+            // Show immediate success popup
             if (window.statusPopupManager) {
               window.statusPopupManager.show({
                 success: true,
-                saveSuccess: true, // Save was successful
+                saveSuccess: true,
                 interactionType: type,
                 platform: this.platform,
                 categories: ['Pending...'],
-                aiProcessed: false,
-                aiFailureReason: null
+                aiProcessed: false
               });
             }
-            return; // Exit on successful save
-          } else if (response?.error === 'Extension context invalidated.') {
-            console.warn(`${this.platform}: Service worker inactive, retrying...`);
-            retries--;
-            await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
-          } else {
-            console.error(`${this.platform}: Failed to save interaction:`, response?.error);
-
-            // Show failure popup - save actually failed
-            if (window.statusPopupManager) {
-              window.statusPopupManager.show({
-                success: false,
-                saveSuccess: false, // Save failed
-                interactionType: type,
-                platform: this.platform,
-                categories: ['Failed'],
-                aiProcessed: false,
-                aiFailureReason: response?.error || 'Unknown error'
-              });
-            }
-            break; // Exit on other errors
+            return; // Success!
           }
+
+          if (attempt < MAX_RETRIES) {
+            // Wait before retry if context invalidated or other error
+            await new Promise(resolve => setTimeout(resolve, 500));
+            continue;
+          }
+
+          throw new Error(response?.error || 'Unknown error');
+
         } catch (error) {
-          if (error.message.includes('Extension context invalidated')) {
-            console.warn(`${this.platform}: Service worker inactive, retrying...`);
-            retries--;
-            await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
-          } else {
-            console.error(`${this.platform}: Error capturing interaction:`, error);
-
-            // Show failure popup
-            if (window.statusPopupManager) {
-              window.statusPopupManager.show({
-                success: false,
-                saveSuccess: false,
-                interactionType: type,
-                platform: this.platform,
-                categories: ['Error'],
-                aiProcessed: false,
-                aiFailureReason: error.message
-              });
-            }
-            break; // Exit on other errors
+          if (attempt === MAX_RETRIES) {
+            throw error; // Throw on final failure
           }
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
-      }
-
-      // If all retries fail, show failure popup and remove from pending saves
-      if (!saveSuccess && window.statusPopupManager) {
-        window.statusPopupManager.show({
-          success: false,
-          saveSuccess: false,
-          interactionType: type,
-          platform: this.platform,
-          categories: ['Connection Failed'],
-          aiProcessed: false,
-          aiFailureReason: 'Could not connect to extension'
-        });
       }
       this.pendingSaves.delete(saveKey);
     } catch (error) {
       console.error(`${this.platform}: Error capturing interaction outside retry block:`, error);
 
-      // Show error popup
+      // Determine user-friendly error message
+      let errorMessage = error.message;
+      if (error.message.includes('Extension context invalidated')) {
+        errorMessage = 'Extension was updated. Please refresh the page.';
+      }
+
+      // Show error popup with correct interaction type
       if (window.statusPopupManager) {
         window.statusPopupManager.show({
           success: false,
           saveSuccess: false,
-          interactionType: 'interaction',
+          interactionType: type,
           platform: this.platform,
           categories: ['Error'],
           aiProcessed: false,
-          aiFailureReason: error.message
+          aiFailureReason: errorMessage
         });
       }
     }
@@ -311,6 +300,15 @@ class BasePlatformTracker {
 
   getPostContainerSelectors() {
     throw new Error(`${this.platform}: getPostContainerSelectors() must be implemented`);
+  }
+
+  /**
+   * Extract the currently logged-in user info
+   * @returns {Object|null} User info object with username, fullName (optional), id (optional)
+   */
+  extractLoggedInUser() {
+    // Default implementation - subclasses should override with platform-specific logic
+    return null;
   }
 
   isLikeButton(element) {

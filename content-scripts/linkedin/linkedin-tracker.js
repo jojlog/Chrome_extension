@@ -1,4 +1,18 @@
 // LinkedIn Tracker - Tracks interactions on LinkedIn
+
+// Defensive checks for required dependencies
+if (!window.BasePlatformTracker) {
+  throw new Error('LinkedInTracker: BasePlatformTracker not loaded. Check script order in manifest.json');
+}
+if (!window.ContentExtractor) {
+  throw new Error('LinkedInTracker: ContentExtractor not loaded. Check script order in manifest.json');
+}
+if (!window.LinkedInSelectors) {
+  throw new Error('LinkedInTracker: LinkedInSelectors not loaded. Check script order in manifest.json');
+}
+
+// NOTE: Classes are already declared in their source files which run before this file.
+
 class LinkedInTracker extends BasePlatformTracker {
   constructor() {
     super('linkedin');
@@ -72,7 +86,7 @@ class LinkedInTracker extends BasePlatformTracker {
 
   findPostElement(button) {
     return button.closest('.feed-shared-update-v2') ||
-           button.closest('[data-id*="urn:li:activity"]');
+      button.closest('[data-id*="urn:li:activity"]');
   }
 
   findAllPosts() {
@@ -143,6 +157,50 @@ class LinkedInTracker extends BasePlatformTracker {
       comments: comments,
       shares: shares
     };
+  }
+
+  /**
+   * Extract the currently logged-in user on LinkedIn
+   * @returns {Object|null} User info
+   */
+  extractLoggedInUser() {
+    try {
+      // Try feed identity module (sidebar with your profile)
+      const feedIdentity = document.querySelector('.feed-identity-module');
+      if (feedIdentity) {
+        const nameElement = feedIdentity.querySelector('.feed-identity-module__actor-meta');
+        const linkElement = feedIdentity.querySelector('a[href*="/in/"]');
+
+        if (linkElement) {
+          const href = linkElement.getAttribute('href');
+          const usernameMatch = href?.match(/\/in\/([^\/\?]+)/);
+          const username = usernameMatch ? usernameMatch[1] : null;
+          const fullName = nameElement?.textContent?.trim();
+
+          if (username) {
+            return { username, fullName: fullName || null, id: null };
+          }
+        }
+      }
+
+      // Fallback: Try global nav profile link
+      const navProfile = document.querySelector('.global-nav__me-photo, .global-nav__primary-link-me');
+      if (navProfile) {
+        const link = navProfile.closest('a') || navProfile.querySelector('a');
+        if (link) {
+          const href = link.getAttribute('href');
+          const usernameMatch = href?.match(/\/in\/([^\/\?]+)/);
+          if (usernameMatch) {
+            return { username: usernameMatch[1], fullName: null, id: null };
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error extracting logged-in user:', error);
+      return null;
+    }
   }
 }
 

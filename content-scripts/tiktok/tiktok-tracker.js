@@ -1,4 +1,18 @@
 // TikTok Tracker - Tracks interactions on TikTok
+
+// Defensive checks for required dependencies
+if (!window.BasePlatformTracker) {
+  throw new Error('TikTokTracker: BasePlatformTracker not loaded. Check script order in manifest.json');
+}
+if (!window.ContentExtractor) {
+  throw new Error('TikTokTracker: ContentExtractor not loaded. Check script order in manifest.json');
+}
+if (!window.TikTokSelectors) {
+  throw new Error('TikTokTracker: TikTokSelectors not loaded. Check script order in manifest.json');
+}
+
+// NOTE: Classes are already declared in their source files which run before this file.
+
 class TikTokTracker extends BasePlatformTracker {
   constructor() {
     super('tiktok');
@@ -72,8 +86,8 @@ class TikTokTracker extends BasePlatformTracker {
 
   findPostElement(button) {
     return button.closest('div[data-e2e="recommend-list-item-container"]') ||
-           button.closest('div.DivItemContainerV2') ||
-           button.closest('div[class*="DivItemContainer"]');
+      button.closest('div.DivItemContainerV2') ||
+      button.closest('div[class*="DivItemContainer"]');
   }
 
   findAllPosts() {
@@ -102,7 +116,7 @@ class TikTokTracker extends BasePlatformTracker {
 
   isPostElement(element) {
     return element.getAttribute('data-e2e') === 'recommend-list-item-container' ||
-           element.classList.contains('DivItemContainerV2');
+      element.classList.contains('DivItemContainerV2');
   }
 
   extractPostUrl(postElement) {
@@ -153,6 +167,45 @@ class TikTokTracker extends BasePlatformTracker {
       comments: comments,
       shares: shares
     };
+  }
+
+  /**
+   * Extract the currently logged-in user on TikTok
+   * @returns {Object|null} User info
+   */
+  extractLoggedInUser() {
+    try {
+      // Try profile link in header
+      const profileLink = document.querySelector('[data-e2e="profile-icon"]');
+      if (profileLink) {
+        const link = profileLink.closest('a') || profileLink;
+        const href = link.getAttribute('href');
+        if (href) {
+          const usernameMatch = href.match(/\/@([^\/\?]+)/);
+          if (usernameMatch) {
+            return { username: usernameMatch[1], fullName: null, id: null };
+          }
+        }
+      }
+
+      // Fallback: Check avatar/profile in bottom nav or header
+      const avatarLinks = document.querySelectorAll('a[href^="/@"]');
+      for (const link of avatarLinks) {
+        // Look for profile-like elements
+        if (link.querySelector('img') || link.getAttribute('data-e2e')?.includes('profile')) {
+          const href = link.getAttribute('href');
+          const usernameMatch = href?.match(/\/@([^\/\?]+)/);
+          if (usernameMatch) {
+            return { username: usernameMatch[1], fullName: null, id: null };
+          }
+        }
+      }
+
+      return null;
+    } catch (error) {
+      console.error('Error extracting logged-in user:', error);
+      return null;
+    }
   }
 }
 

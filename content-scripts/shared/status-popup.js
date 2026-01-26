@@ -102,7 +102,14 @@ class StatusPopupManager {
     this.popupElement.id = 'content-tracker-status-popup';
     this.popupElement.classList.add('ct-status-popup'); // Base class
     this.popupElement.addEventListener('click', () => this.hide()); // Allow closing by clicking
+
+    // Append to body or documentElement
+    (document.body || document.documentElement).appendChild(this.popupElement);
   }
 }
 
-window.statusPopupManager = new StatusPopupManager();
+// Ensure global access
+if (typeof window !== 'undefined') {
+  window.StatusPopupManager = StatusPopupManager;
+  window.statusPopupManager = new StatusPopupManager();
+}

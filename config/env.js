@@ -20,8 +20,10 @@ const ENV_CONFIG = {
 // so use the build script or enter values directly in ENV_CONFIG above
 
 // Export for use in other scripts
+// Support multiple contexts: Node.js, window (content scripts), and service worker (self)
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = ENV_CONFIG;
-} else if (typeof window !== 'undefined') {
-  window.ENV_CONFIG = ENV_CONFIG;
+} else if (typeof globalThis !== 'undefined') {
+  // globalThis works in all contexts (window, service worker, etc.)
+  globalThis.ENV_CONFIG = ENV_CONFIG;
 }

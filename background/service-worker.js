@@ -108,8 +108,27 @@ async function handleMessage(message, sender) {
     case 'UPDATE_USER_CATEGORIES':
       return await handleUpdateUserCategories(message.categories);
 
+    // Account Management
+    case 'GET_USER_ACCOUNTS':
+      return await handleGetUserAccounts();
+
+    case 'SAVE_USER_ACCOUNTS':
+      return await handleSaveUserAccounts(message.accounts);
+
+    case 'ADD_USER_ACCOUNT':
+      return await handleAddUserAccount(message.platform, message.accountInfo);
+
+    case 'UPDATE_USER_ACCOUNT':
+      return await handleUpdateUserAccount(message.platform, message.accountId, message.updates);
+
+    case 'REMOVE_USER_ACCOUNT':
+      return await handleRemoveUserAccount(message.platform, message.accountId);
+
     case 'PING':
       return { success: true, message: 'pong' };
+
+    case 'GET_CURRENT_TAB_ID':
+      return { success: true, tabId: sender?.tab?.id || null };
 
     default:
       console.warn('Unknown message type:', message.type);
@@ -138,6 +157,9 @@ async function handleSaveInteraction(interaction, sender) {
         message: `Saved from ${interaction.platform}`,
         priority: 0
       });
+
+      console.log('Notification created for saved interaction');
+
 
       // Trigger AI processing
       processAIQueue();
@@ -453,3 +475,63 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 setTimeout(processAIQueue, 5000); // Wait 5 seconds after startup
 
 console.log('Background service worker initialized');
+
+/**
+ * Get user accounts
+ */
+async function handleGetUserAccounts() {
+  try {
+    const accounts = await storageManager.getUserAccounts();
+    return { success: true, data: accounts };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Save user accounts
+ */
+async function handleSaveUserAccounts(accounts) {
+  try {
+    const success = await storageManager.saveUserAccounts(accounts);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Add user account
+ */
+async function handleAddUserAccount(platform, accountInfo) {
+  try {
+    const success = await storageManager.addUserAccount(platform, accountInfo);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Update user account
+ */
+async function handleUpdateUserAccount(platform, accountId, updates) {
+  try {
+    const success = await storageManager.updateUserAccount(platform, accountId, updates);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Remove user account
+ */
+async function handleRemoveUserAccount(platform, accountId) {
+  try {
+    const success = await storageManager.removeUserAccount(platform, accountId);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}

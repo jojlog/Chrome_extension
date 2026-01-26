@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Content Tracker Dashboard</title>
   <link rel="stylesheet" href="dashboard.css">
 </head>
+
 <body>
   <div class="dashboard-container">
     <!-- Sidebar -->
@@ -75,17 +77,20 @@
             <div class="form-group">
               <label for="openai-api-key">OpenAI API Key (Optional)</label>
               <input type="password" id="openai-api-key" placeholder="sk-proj-...">
-              <small>Enter your OpenAI API key. <a href="https://platform.openai.com/api-keys" target="_blank">Get one here</a></small>
+              <small>Enter your OpenAI API key. <a href="https://platform.openai.com/api-keys" target="_blank">Get one
+                  here</a></small>
             </div>
 
             <div class="form-group">
               <label for="gemini-api-key">Google Gemini API Key (Optional)</label>
               <input type="password" id="gemini-api-key" placeholder="AIza...">
-              <small>Enter your Gemini API key. <a href="https://makersuite.google.com/app/apikey" target="_blank">Get one here</a></small>
+              <small>Enter your Gemini API key. <a href="https://makersuite.google.com/app/apikey" target="_blank">Get
+                  one here</a></small>
             </div>
 
             <div class="form-group">
-              <small style="color: #667eea; font-weight: bold;">💡 Tip: If you enter both API keys, OpenAI will be used first, and Gemini will be used automatically as a fallback.</small>
+              <small style="color: #667eea; font-weight: bold;">💡 Tip: If you enter both API keys, OpenAI will be used
+                first, and Gemini will be used automatically as a fallback.</small>
             </div>
 
             <!-- Legacy fields for backward compatibility (hidden) -->
@@ -130,6 +135,14 @@
               <small>Add, edit, or remove categories that you use for manual classification.</small>
             </div>
 
+            <div class="form-group">
+              <label>Connected Accounts</label>
+              <div id="accounts-list" class="accounts-list">
+                <!-- Accounts will be rendered here -->
+              </div>
+              <small>Accounts are automatically added when you browse social media.</small>
+            </div>
+
             <!-- Separator for better UI -->
             <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
 
@@ -144,6 +157,7 @@
     </main>
   </div>
 
-  <script src="dashboard.js"></script>
+  <script src="dashboard.js" type="module"></script>
 </body>
+
 </html>
