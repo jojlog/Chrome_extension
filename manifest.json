@@ -37,7 +37,10 @@
         "content-scripts/instagram/instagram-selectors.js",
         "content-scripts/instagram/instagram-tracker.js"
       ],
-      "css": ["content-scripts/shared/status-popup.css"],
+      "css": [
+        "content-scripts/shared/status-popup.css",
+        "content-scripts/shared/auto-scroll-overlay.css"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -50,7 +53,10 @@
         "content-scripts/twitter/twitter-selectors.js",
         "content-scripts/twitter/twitter-tracker.js"
       ],
-      "css": ["content-scripts/shared/status-popup.css"],
+      "css": [
+        "content-scripts/shared/status-popup.css",
+        "content-scripts/shared/auto-scroll-overlay.css"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -63,7 +69,10 @@
         "content-scripts/linkedin/linkedin-selectors.js",
         "content-scripts/linkedin/linkedin-tracker.js"
       ],
-      "css": ["content-scripts/shared/status-popup.css"],
+      "css": [
+        "content-scripts/shared/status-popup.css",
+        "content-scripts/shared/auto-scroll-overlay.css"
+      ],
       "run_at": "document_idle"
     },
     {
@@ -76,7 +85,10 @@
         "content-scripts/tiktok/tiktok-selectors.js",
         "content-scripts/tiktok/tiktok-tracker.js"
       ],
-      "css": ["content-scripts/shared/status-popup.css"],
+      "css": [
+        "content-scripts/shared/status-popup.css",
+        "content-scripts/shared/auto-scroll-overlay.css"
+      ],
       "run_at": "document_idle"
     }
   ],

@@ -12,6 +12,11 @@ const MESSAGE_TYPES = {
   DELETE_INTERACTION: 'DELETE_INTERACTION',
   GET_SETTINGS: 'GET_SETTINGS',
   GET_IMPORT_STATUS: 'GET_IMPORT_STATUS',
+  TRIGGER_AUTO_IMPORT: 'TRIGGER_AUTO_IMPORT',
+  START_AUTO_SCROLL_IMPORT: 'START_AUTO_SCROLL_IMPORT',
+  PAUSE_AUTO_SCROLL_IMPORT: 'PAUSE_AUTO_SCROLL_IMPORT',
+  RESUME_AUTO_SCROLL_IMPORT: 'RESUME_AUTO_SCROLL_IMPORT',
+  STOP_AUTO_SCROLL_IMPORT: 'STOP_AUTO_SCROLL_IMPORT',
   PING: 'PING',
   GET_CURRENT_TAB_ID: 'GET_CURRENT_TAB_ID'
 };
@@ -30,6 +35,21 @@ class BasePlatformTracker {
     this.pageMode = null; // 'feed', 'bookmarks', 'likes', 'saved', etc.
     this.settings = null;
     this.bulkCaptureTimeout = null;
+    this.autoScrollState = {
+      running: false,
+      paused: false,
+      stopped: false,
+      completed: false,
+      importedCount: 0,
+      startTime: 0,
+      lastScrollHeight: 0,
+      noGrowthStreak: 0,
+      maxItems: 50,
+      maxDurationMs: 5 * 60 * 1000,
+      stepDelayMs: 1000,
+      minNoGrowthChecks: 3
+    };
+    this.autoScrollOverlay = null;
 
     console.log(`${this.platform} tracker initializing...`);
     this.init();
@@ -65,6 +85,26 @@ class BasePlatformTracker {
             autoImportPaused: !!this.settings?.autoImportPaused
           }
         });
+      }
+      if (message.type === MESSAGE_TYPES.TRIGGER_AUTO_IMPORT) {
+        const triggered = this.triggerManualImport();
+        sendResponse({ success: true, triggered });
+      }
+      if (message.type === MESSAGE_TYPES.START_AUTO_SCROLL_IMPORT) {
+        const result = this.startAutoScrollImport('popup');
+        sendResponse({ success: result.started, reason: result.reason });
+      }
+      if (message.type === MESSAGE_TYPES.PAUSE_AUTO_SCROLL_IMPORT) {
+        this.pauseAutoScrollImport();
+        sendResponse({ success: true });
+      }
+      if (message.type === MESSAGE_TYPES.RESUME_AUTO_SCROLL_IMPORT) {
+        this.resumeAutoScrollImport();
+        sendResponse({ success: true });
+      }
+      if (message.type === MESSAGE_TYPES.STOP_AUTO_SCROLL_IMPORT) {
+        this.stopAutoScrollImport('stopped');
+        sendResponse({ success: true });
       }
       return true;
     });
@@ -298,6 +338,216 @@ class BasePlatformTracker {
     }, 800);
   }
 
+  triggerManualImport() {
+    if (!this.pageMode || this.pageMode === 'feed') {
+      return false;
+    }
+    if (!this.settings?.autoImportSavedPages || this.settings?.autoImportPaused) {
+      return false;
+    }
+    this.scheduleBulkCapture();
+    return true;
+  }
+
+  startAutoScrollImport(origin = 'overlay') {
+    if (!this.pageMode || this.pageMode === 'feed') {
+      this.ensureAutoScrollOverlay();
+      this.updateAutoScrollOverlay('Stopped', 'Open a saved/liked page to start auto-scroll.', true);
+      return { started: false, reason: 'not_saved_page' };
+    }
+
+    if (this.autoScrollState.running && !this.autoScrollState.paused) {
+      return { started: false, reason: 'already_running' };
+    }
+
+    this.autoScrollState.running = true;
+    this.autoScrollState.paused = false;
+    this.autoScrollState.stopped = false;
+    this.autoScrollState.completed = false;
+    this.autoScrollState.importedCount = 0;
+    this.autoScrollState.startTime = Date.now();
+    this.autoScrollState.lastScrollHeight = this.getScrollHeight();
+    this.autoScrollState.noGrowthStreak = 0;
+
+    this.ensureAutoScrollOverlay();
+    this.updateAutoScrollOverlay('Running', 'Auto-scroll import started.');
+
+    this.runAutoScrollLoop();
+    return { started: true };
+  }
+
+  pauseAutoScrollImport() {
+    if (!this.autoScrollState.running) return;
+    this.autoScrollState.paused = true;
+    this.updateAutoScrollOverlay('Paused', 'Auto-scroll import paused.');
+  }
+
+  resumeAutoScrollImport() {
+    if (!this.autoScrollState.running) return;
+    this.autoScrollState.paused = false;
+    this.updateAutoScrollOverlay('Running', 'Auto-scroll import resumed.');
+  }
+
+  stopAutoScrollImport(reason = 'stopped') {
+    if (!this.autoScrollState.running) return;
+    this.autoScrollState.running = false;
+    this.autoScrollState.paused = false;
+    this.autoScrollState.stopped = reason === 'stopped';
+    this.autoScrollState.completed = reason === 'completed';
+
+    const statusLabel = this.autoScrollState.completed ? 'Completed' : 'Stopped';
+    const hint = this.autoScrollState.completed ?
+      'Auto-scroll import completed.' :
+      'Auto-scroll import stopped.';
+    this.updateAutoScrollOverlay(statusLabel, hint, true);
+  }
+
+  async runAutoScrollLoop() {
+    while (this.autoScrollState.running) {
+      if (this.autoScrollState.paused) {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        continue;
+      }
+
+      const elapsed = Date.now() - this.autoScrollState.startTime;
+      if (this.autoScrollState.importedCount >= this.autoScrollState.maxItems) {
+        this.stopAutoScrollImport('completed');
+        break;
+      }
+      if (elapsed >= this.autoScrollState.maxDurationMs) {
+        this.stopAutoScrollImport('completed');
+        break;
+      }
+
+      const beforeHeight = this.getScrollHeight();
+      window.scrollBy(0, Math.max(200, Math.floor(window.innerHeight * 0.9)));
+
+      await new Promise(resolve => setTimeout(resolve, this.autoScrollState.stepDelayMs));
+
+      const captured = await this.bulkCaptureVisiblePosts({
+        force: true,
+        suppressSummary: true
+      });
+      if (captured > 0) {
+        this.autoScrollState.importedCount += captured;
+      }
+
+      const afterHeight = this.getScrollHeight();
+      if (afterHeight <= beforeHeight + 10) {
+        this.autoScrollState.noGrowthStreak += 1;
+      } else {
+        this.autoScrollState.noGrowthStreak = 0;
+      }
+
+      this.updateAutoScrollOverlay(
+        this.autoScrollState.paused ? 'Paused' : 'Running',
+        `Imported ${this.autoScrollState.importedCount} items`
+      );
+
+      if (this.autoScrollState.noGrowthStreak >= this.autoScrollState.minNoGrowthChecks) {
+        this.stopAutoScrollImport('completed');
+        break;
+      }
+    }
+  }
+
+  getScrollHeight() {
+    return Math.max(
+      document.documentElement.scrollHeight || 0,
+      document.body?.scrollHeight || 0
+    );
+  }
+
+  ensureAutoScrollOverlay() {
+    if (this.autoScrollOverlay) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'ct-auto-scroll-overlay';
+    overlay.className = 'ct-auto-scroll-overlay';
+    overlay.innerHTML = `
+      <div class="ct-auto-scroll-header">
+        <div>
+          <div class="ct-auto-scroll-title">Auto-Scroll Import</div>
+          <div class="ct-auto-scroll-status">
+            <span class="ct-auto-scroll-pill ct-auto-scroll-pill--running">Running</span>
+          </div>
+        </div>
+        <button class="ct-auto-scroll-close" data-action="close" aria-label="Close">×</button>
+      </div>
+      <div class="ct-auto-scroll-body">
+        <div class="ct-auto-scroll-count">Imported 0 items</div>
+        <div class="ct-auto-scroll-hint">Saved/Liked page</div>
+      </div>
+      <div class="ct-auto-scroll-actions">
+        <button class="ct-auto-scroll-btn" data-action="pause">Pause</button>
+        <button class="ct-auto-scroll-btn" data-action="resume">Resume</button>
+        <button class="ct-auto-scroll-btn ct-auto-scroll-btn--danger" data-action="stop">Stop</button>
+      </div>
+    `;
+
+    overlay.addEventListener('click', (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      const action = target.getAttribute('data-action');
+      if (!action) return;
+
+      switch (action) {
+        case 'pause':
+          this.pauseAutoScrollImport();
+          break;
+        case 'resume':
+          this.resumeAutoScrollImport();
+          break;
+        case 'stop':
+          this.stopAutoScrollImport('stopped');
+          break;
+        case 'close':
+          overlay.remove();
+          this.autoScrollOverlay = null;
+          break;
+        default:
+          break;
+      }
+    });
+
+    document.body.appendChild(overlay);
+    this.autoScrollOverlay = overlay;
+    this.updateAutoScrollOverlay('Running', 'Auto-scroll ready.');
+  }
+
+  updateAutoScrollOverlay(statusLabel, hint, stopped = false) {
+    if (!this.autoScrollOverlay) return;
+    const statusEl = this.autoScrollOverlay.querySelector('.ct-auto-scroll-pill');
+    const countEl = this.autoScrollOverlay.querySelector('.ct-auto-scroll-count');
+    const hintEl = this.autoScrollOverlay.querySelector('.ct-auto-scroll-hint');
+    const pauseBtn = this.autoScrollOverlay.querySelector('[data-action="pause"]');
+    const resumeBtn = this.autoScrollOverlay.querySelector('[data-action="resume"]');
+    const stopBtn = this.autoScrollOverlay.querySelector('[data-action="stop"]');
+
+    if (statusEl) {
+      const statusKey = statusLabel.toLowerCase();
+      statusEl.textContent = statusLabel;
+      statusEl.className = `ct-auto-scroll-pill ct-auto-scroll-pill--${statusKey}`;
+    }
+
+    if (countEl) {
+      countEl.textContent = `Imported ${this.autoScrollState.importedCount} items`;
+    }
+
+    if (hintEl && hint) {
+      hintEl.textContent = hint;
+    }
+
+    if (pauseBtn && resumeBtn) {
+      const isPaused = this.autoScrollState.paused;
+      pauseBtn.toggleAttribute('disabled', isPaused || stopped);
+      resumeBtn.toggleAttribute('disabled', !isPaused || stopped);
+    }
+
+    if (stopBtn) {
+      stopBtn.toggleAttribute('disabled', stopped);
+    }
+  }
+
   async captureInteraction(type, postElement) {
     try {
       const postId = postElement.dataset.postId || this.generatePostId(postElement);
@@ -483,14 +733,16 @@ class BasePlatformTracker {
   /**
    * Bulk capture all visible posts on saved/liked pages
    */
-  async bulkCaptureVisiblePosts() {
-    if (!this.shouldAutoImport()) return;
+  async bulkCaptureVisiblePosts(options = {}) {
+    const force = options.force === true;
+    const suppressSummary = options.suppressSummary === true;
+    if (!force && !this.shouldAutoImport()) return 0;
     this.cancelBulkCapture();
 
     console.log(`${this.platform}: Bulk capturing visible posts from ${this.pageMode} page`);
 
     const selectors = this.getPostContainerSelectors();
-    if (!selectors || selectors.length === 0) return;
+    if (!selectors || selectors.length === 0) return 0;
 
     const posts = ContentExtractor.findAllWithFallback(document, selectors);
     console.log(`${this.platform}: Found ${posts.length} posts to potentially capture`);
@@ -520,7 +772,7 @@ class BasePlatformTracker {
       }
     }
 
-    if (capturedCount > 0 && !this.settings?.suppressImportNotifications) {
+    if (capturedCount > 0 && !suppressSummary && !this.settings?.suppressImportNotifications) {
       console.log(`${this.platform}: Captured ${capturedCount} posts from ${this.pageMode} page`);
 
       // Show summary notification
@@ -535,6 +787,8 @@ class BasePlatformTracker {
         });
       }
     }
+
+    return capturedCount;
   }
 
   /**

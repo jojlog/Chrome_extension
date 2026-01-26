@@ -177,3 +177,27 @@ Files to Touch (Expected)
 Open Questions
 - Should pause be global (all tabs) or per-tab? (Default plan: global via settings.)
 - Should the popup toggle autoImportSavedPages as well, or only pause/resume?
+
+Auto-Scroll Import (Saved/Liked Only) — Confirmed
+Defaults
+- Max items: 50
+- Max duration: 5 minutes
+- Step delay: 800–1200ms with DOM settle check
+
+Overlay (In-Page)
+- Floating card shown during auto-scroll import
+- Status pill: Running / Paused / Stopped / Completed
+- Imported count: “Imported X items”
+- Controls: Pause / Resume / Stop
+- Optional hint: “No new items detected, stopping soon…”
+
+Control Flow
+1) Popup button: “Start Auto-Scroll Import”
+2) Content script validates pageMode is saved/liked
+3) Overlay appears and loop begins
+4) Auto-scroll + capture visible posts
+5) Stop conditions:
+   - Imported >= 50
+   - Elapsed >= 5 minutes
+   - No new content after N checks
+6) Overlay updates status and final summary

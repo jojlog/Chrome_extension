@@ -136,6 +136,7 @@ class PopupManager {
 
     const autoImportEnabled = !!settings?.autoImportSavedPages;
     const autoImportPaused = !!settings?.autoImportPaused;
+    const autoScrollButton = document.getElementById('auto-scroll-start');
 
     let statusLabel = 'Off';
     let statusClass = 'status--off';
@@ -170,6 +171,9 @@ class PopupManager {
     contextText.textContent = context;
     toggleButton.textContent = buttonLabel;
     toggleButton.disabled = false;
+    if (autoScrollButton) {
+      autoScrollButton.disabled = !supported || !pageMode || pageMode === 'feed';
+    }
   }
 
   async toggleImportStatus() {
@@ -192,6 +196,7 @@ class PopupManager {
 
     await this.sendRuntimeMessage({ type: 'UPDATE_SETTINGS', updates });
     await this.loadImportStatus();
+    await this.triggerImportIfActive();
   }
 
   async getSettings() {
@@ -288,6 +293,16 @@ class PopupManager {
       return;
     }
     window.open(url, '_blank');
+  }
+
+  async triggerImportIfActive() {
+    const tab = await this.getActiveTab();
+    if (!tab?.id) return;
+    try {
+      await this.sendTabMessage(tab.id, { type: 'TRIGGER_AUTO_IMPORT' });
+    } catch (error) {
+      // Ignore if content script isn't available.
+    }
   }
 
   /**
@@ -394,6 +409,34 @@ class PopupManager {
     document.getElementById('import-toggle')?.addEventListener('click', async () => {
       await this.toggleImportStatus();
     });
+
+    document.getElementById('auto-scroll-start')?.addEventListener('click', async () => {
+      await this.startAutoScrollImport();
+    });
+  }
+
+  async startAutoScrollImport() {
+    const tab = await this.getActiveTab();
+    if (!tab?.id) return;
+    try {
+      const response = await this.sendTabMessage(tab.id, { type: 'START_AUTO_SCROLL_IMPORT' });
+      if (response && response.success) {
+        const context = document.getElementById('import-context');
+        if (context) {
+          context.textContent = 'Auto-scroll import started.';
+        }
+      } else {
+        const context = document.getElementById('import-context');
+        if (context) {
+          context.textContent = 'Open a saved/liked page to start auto-scroll.';
+        }
+      }
+    } catch (error) {
+      const context = document.getElementById('import-context');
+      if (context) {
+        context.textContent = 'Auto-scroll is unavailable on this page.';
+      }
+    }
   }
 }
 

@@ -1,0 +1,118 @@
+.ct-auto-scroll-overlay {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  width: 280px;
+  background: rgba(255, 249, 242, 0.98);
+  border: 1px solid rgba(59, 45, 34, 0.18);
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(44, 32, 21, 0.25);
+  padding: 12px 14px;
+  font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: #2a241f;
+  z-index: 2147483647;
+}
+
+.ct-auto-scroll-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.ct-auto-scroll-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #5a4636;
+}
+
+.ct-auto-scroll-status {
+  margin-top: 4px;
+}
+
+.ct-auto-scroll-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ct-auto-scroll-pill--running {
+  background: #e5f5ec;
+  color: #1f6b49;
+}
+
+.ct-auto-scroll-pill--paused {
+  background: #fbead3;
+  color: #8a4a12;
+}
+
+.ct-auto-scroll-pill--stopped,
+.ct-auto-scroll-pill--completed {
+  background: #f1e8df;
+  color: #7b6c5c;
+}
+
+.ct-auto-scroll-close {
+  border: none;
+  background: rgba(43, 31, 22, 0.08);
+  color: #2a241f;
+  font-size: 18px;
+  line-height: 1;
+  border-radius: 8px;
+  width: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.ct-auto-scroll-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ct-auto-scroll-count {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ct-auto-scroll-hint {
+  font-size: 11px;
+  color: #6f645a;
+}
+
+.ct-auto-scroll-actions {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.ct-auto-scroll-btn {
+  border: 1px solid rgba(59, 45, 34, 0.18);
+  background: #f7efe6;
+  color: #2a241f;
+  border-radius: 8px;
+  padding: 6px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ct-auto-scroll-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ct-auto-scroll-btn--danger {
+  background: rgba(197, 107, 42, 0.15);
+  border-color: rgba(197, 107, 42, 0.4);
+  color: #8a4a12;
+}
