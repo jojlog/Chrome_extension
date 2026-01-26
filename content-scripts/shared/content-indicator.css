@@ -1,0 +1,61 @@
+.ct-saved-indicator {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid rgba(59, 45, 34, 0.2);
+  color: #2a241f;
+  box-shadow: 0 6px 14px rgba(44, 32, 21, 0.2);
+  pointer-events: none;
+  animation: ct-saved-indicator-float 1.6s ease-in-out infinite;
+  z-index: 3;
+}
+
+.ct-saved-indicator--saved {
+  background: #e5f5ec;
+  color: #1f6b49;
+  border-color: rgba(31, 107, 73, 0.3);
+}
+
+.ct-saved-indicator--unsaved {
+  background: #fbead3;
+  color: #8a4a12;
+  border-color: rgba(138, 74, 18, 0.35);
+}
+
+.ct-saved-indicator--loading {
+  background: #f1e8df;
+  color: #7b6c5c;
+  border-color: rgba(123, 108, 92, 0.3);
+  animation: ct-saved-indicator-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ct-saved-indicator-float {
+  0% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+  100% {
+    transform: translateY(0);
+  }
+}
+
+@keyframes ct-saved-indicator-pulse {
+  0% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.6;
+  }
+}

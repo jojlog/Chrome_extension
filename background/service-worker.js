@@ -74,6 +74,8 @@ async function handleMessage(message, sender) {
 
     case 'GET_INTERACTION_BY_ID':
       return await handleGetInteractionById(message.id);
+    case 'GET_INTERACTION_BY_KEY':
+      return await handleGetInteractionByKey(message.contentKey);
 
     case 'UPDATE_INTERACTION':
       return await handleUpdateInteraction(message.id, message.updates);
@@ -196,6 +198,18 @@ async function handleGetInteractions(filters) {
 async function handleGetInteractionById(id) {
   try {
     const interaction = await storageManager.getInteractionById(id);
+    return { success: true, data: interaction };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get interaction by content key
+ */
+async function handleGetInteractionByKey(contentKey) {
+  try {
+    const interaction = await storageManager.getInteractionByKey(contentKey);
     return { success: true, data: interaction };
   } catch (error) {
     return { success: false, error: error.message };

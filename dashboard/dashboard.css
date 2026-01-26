@@ -241,6 +241,10 @@ body {
   gap: 16px;
 }
 
+.content-list .media-preview {
+  display: none;
+}
+
 .content-card {
   background: var(--surface);
   border-radius: 12px;
@@ -506,6 +510,10 @@ body {
   border: 1px solid var(--border);
 }
 
+.modal-content-wide {
+  max-width: 760px;
+}
+
 .modal-header {
   padding: 20px 24px;
   border-bottom: 1px solid var(--border);
@@ -632,6 +640,203 @@ body {
 
 .btn-secondary:hover {
   background: #efe4d8;
+}
+
+/* AI Floating Action Button */
+.ai-fab {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.ai-fab-btn {
+  border: none;
+  background: linear-gradient(120deg, #3a2c20, #6b3c16);
+  color: #fff;
+  padding: 12px 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  box-shadow: 0 12px 26px rgba(44, 32, 21, 0.25);
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.ai-fab-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 32px rgba(44, 32, 21, 0.3);
+}
+
+.ai-fab-icon {
+  font-size: 16px;
+}
+
+.ai-fab-menu {
+  min-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 14px 30px rgba(44, 32, 21, 0.2);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+  transition: all 0.2s ease;
+}
+
+.ai-fab.open .ai-fab-menu,
+.ai-fab:hover .ai-fab-menu {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.ai-fab-menu-header {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.ai-menu-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.ai-menu-item:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: #f1e2d2;
+}
+
+/* AI Modal Helpers */
+.ai-item-list {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.ai-item-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid rgba(59, 45, 34, 0.08);
+}
+
+.ai-item-row input {
+  margin-top: 4px;
+}
+
+.ai-item-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+
+.ai-item-text {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.ai-item-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.ai-item-score {
+  font-size: 11px;
+  color: var(--accent-strong);
+  background: rgba(197, 107, 42, 0.12);
+  padding: 4px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.ai-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 0 16px;
+}
+
+.ai-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ai-filter-input {
+  width: 100%;
+  margin: 10px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--surface);
+}
+
+.ai-filter-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.ai-filter-select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--surface-2);
+}
+
+.ai-similarity-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+
+.ai-similarity-row input[type="range"] {
+  flex: 1;
+}
+
+.ai-empty-state {
+  padding: 14px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* Custom styles for category management */

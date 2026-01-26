@@ -3,6 +3,7 @@ import { ContentRenderer } from './modules/content-renderer.js';
 import { FiltersManager } from './modules/filters-manager.js';
 import { ModalsManager } from './modules/modals-manager.js';
 import { AccountsManager } from './modules/accounts-manager.js';
+import { truncateText, formatDate } from '../lib/utils.js';
 
 // Dashboard Manager
 class DashboardManager {
@@ -21,8 +22,18 @@ class DashboardManager {
     };
     this.viewMode = 'grid';
     this.allItems = [];
+    this.itemsById = new Map();
     this.userCategories = [];
     this.userAccounts = {};
+    this.aiTokenCache = new Map();
+    this.aiSuggestedItems = [];
+    this.aiSuggestedScoreMap = new Map();
+    this.aiFilters = {
+      seedQuery: '',
+      suggestedQuery: '',
+      mode: 'text',
+      sensitivity: 50
+    };
 
     this.init();
   }
@@ -62,6 +73,10 @@ class DashboardManager {
 
       if (response && response.success) {
         this.allItems = response.data;
+        this.itemsById = new Map(this.allItems.map(item => [item.id, item]));
+        this.aiTokenCache = new Map();
+        this.aiSuggestedItems = [];
+        this.aiSuggestedScoreMap = new Map();
         this.loadCategoriesFromContent();
         this.filterAndDisplayContent();
       } else {
@@ -143,6 +158,7 @@ class DashboardManager {
       if (response && response.success) {
         // Remove from local array
         this.allItems = this.allItems.filter(item => item.id !== id);
+        this.itemsById.delete(id);
         this.filterAndDisplayContent();
       }
     } catch (error) {
@@ -157,6 +173,7 @@ class DashboardManager {
       const itemIndex = this.allItems.findIndex(i => i.id === id);
       if (itemIndex !== -1) {
         this.allItems[itemIndex].categories = categories;
+        this.itemsById.set(id, this.allItems[itemIndex]);
         // If AI failed before, manual update resolves it
         if (categories.length > 0 && categories[0] !== 'Uncategorized') {
           // We keep aiProcessed=true but clear failure reason effectively by it being manual
@@ -177,6 +194,441 @@ class DashboardManager {
       console.error('Error updating categories:', error);
       alert('Failed to save categories: ' + error.message);
       // Revert reload
+      this.loadContent();
+    }
+  }
+
+  // --- AI Tools ---
+
+  getUncategorizedItems() {
+    return this.allItems.filter(item => {
+      const categories = item.categories || [];
+      return categories.length === 0 || (categories.length === 1 && categories[0] === 'Uncategorized');
+    });
+  }
+
+  async categorizeUncategorizedWithAI() {
+    const items = this.getUncategorizedItems();
+    if (items.length === 0) {
+      alert('No uncategorized items found.');
+      return;
+    }
+
+    const settingsResponse = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+    const settings = settingsResponse?.data || {};
+    const hasApiKey = Boolean(
+      settings.openaiApiKey ||
+      settings.geminiApiKey ||
+      settings.apiKey
+    );
+
+    if (!hasApiKey) {
+      const openSettings = confirm('No AI API key configured. Open settings to add one?');
+      if (openSettings) {
+        this.showSettingsModal();
+      }
+      return;
+    }
+
+    const confirmed = confirm(`Send ${items.length} items to AI for categorization?`);
+    if (!confirmed) return;
+
+    try {
+      for (const item of items) {
+        await this.storage.queueForAI(item.id);
+      }
+      await chrome.runtime.sendMessage({ type: 'PROCESS_AI_QUEUE' });
+      alert(`Queued ${items.length} items for AI categorization.`);
+    } catch (error) {
+      console.error('Error queueing AI categorization:', error);
+      alert('Failed to queue AI categorization: ' + error.message);
+    }
+  }
+
+  updateCategoryDatalist() {
+    const datalist = document.getElementById('ai-category-options');
+    if (!datalist) return;
+
+    const categories = new Set(this.userCategories);
+    this.allItems.forEach(item => {
+      if (item.categories) {
+        item.categories.forEach(cat => {
+          if (cat && cat !== 'Uncategorized') categories.add(cat);
+        });
+      }
+    });
+
+    datalist.innerHTML = '';
+    [...categories].sort().forEach(cat => {
+      const option = document.createElement('option');
+      option.value = cat;
+      datalist.appendChild(option);
+    });
+  }
+
+  openAICategoryModal() {
+    const modal = document.getElementById('ai-category-modal');
+    if (!modal) return;
+
+    const categoryInput = document.getElementById('ai-category-name');
+    if (categoryInput) categoryInput.value = '';
+
+    const status = document.getElementById('ai-similar-status');
+    if (status) status.textContent = '';
+
+    this.aiFilters.seedQuery = '';
+    this.aiFilters.suggestedQuery = '';
+    this.aiFilters.mode = 'text';
+    this.aiFilters.sensitivity = 50;
+
+    const seedFilter = document.getElementById('ai-seed-filter');
+    const suggestedFilter = document.getElementById('ai-suggested-filter');
+    if (seedFilter) seedFilter.value = '';
+    if (suggestedFilter) suggestedFilter.value = '';
+
+    const filterMode = document.getElementById('ai-filter-mode');
+    if (filterMode) filterMode.value = 'text';
+
+    const slider = document.getElementById('ai-similarity-slider');
+    if (slider) slider.value = '50';
+    this.updateSimilarityLabel(50);
+
+    this.updateCategoryDatalist();
+    this.renderAiSeedList();
+    this.aiSuggestedItems = [];
+    this.aiSuggestedScoreMap = new Map();
+    this.renderAiSuggestedList([]);
+
+    modal.classList.remove('hidden');
+  }
+
+  closeAICategoryModal() {
+    document.getElementById('ai-category-modal')?.classList.add('hidden');
+  }
+
+  renderAiSeedList() {
+    const sorted = [...this.allItems].sort((a, b) => b.timestamp - a.timestamp);
+    this.renderAiItemList(sorted, 'ai-seed-list', {
+      defaultChecked: false,
+      filterText: this.aiFilters.seedQuery,
+      filterMode: this.aiFilters.mode,
+      checkedIds: this.getCheckedIdSet('ai-seed-list')
+    });
+  }
+
+  renderAiSuggestedList(items, scoreMap = null) {
+    this.renderAiItemList(items, 'ai-suggested-list', {
+      defaultChecked: true,
+      scoreMap,
+      filterText: this.aiFilters.suggestedQuery,
+      filterMode: this.aiFilters.mode,
+      checkedIds: this.getCheckedIdSet('ai-suggested-list')
+    });
+  }
+
+  updateAiSeedList() {
+    this.renderAiSeedList();
+  }
+
+  updateAiSuggestedList() {
+    this.renderAiSuggestedList(this.aiSuggestedItems, this.aiSuggestedScoreMap);
+  }
+
+  renderAiItemList(items, containerId, options = {}) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    const filteredItems = this.filterAiItems(items, options.filterText, options.filterMode);
+    const hasItems = items.length > 0;
+
+    if (filteredItems.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'ai-empty-state';
+      if (hasItems) {
+        empty.textContent = 'No matches for the current filter.';
+      } else {
+        empty.textContent = containerId === 'ai-suggested-list'
+          ? 'No suggestions yet. Choose examples and click "Find similar".'
+          : 'No items available.';
+      }
+      container.appendChild(empty);
+      return;
+    }
+
+    filteredItems.forEach(item => {
+      const row = document.createElement('label');
+      row.className = 'ai-item-row';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.id = item.id;
+      if (options.checkedIds && options.checkedIds.has(item.id)) {
+        checkbox.checked = true;
+      } else {
+        checkbox.checked = options.defaultChecked === true;
+      }
+
+      const content = document.createElement('div');
+
+      const title = document.createElement('div');
+      title.className = 'ai-item-title';
+      title.textContent = `${item.platform || 'platform'} • ${item.metadata?.author || item.savedBy?.username || 'Unknown'}`;
+
+      const text = document.createElement('div');
+      text.className = 'ai-item-text';
+      text.textContent = truncateText(item.content?.text || '', 140);
+
+      const meta = document.createElement('div');
+      meta.className = 'ai-item-meta';
+      meta.textContent = formatDate(item.timestamp);
+
+      content.appendChild(title);
+      content.appendChild(text);
+      content.appendChild(meta);
+
+      row.appendChild(checkbox);
+      row.appendChild(content);
+
+      if (options.scoreMap && options.scoreMap.has(item.id)) {
+        const score = document.createElement('div');
+        score.className = 'ai-item-score';
+        score.textContent = `${Math.round(options.scoreMap.get(item.id) * 100)}% match`;
+        row.appendChild(score);
+      } else {
+        const spacer = document.createElement('div');
+        row.appendChild(spacer);
+      }
+
+      container.appendChild(row);
+    });
+  }
+
+  filterAiItems(items, filterText, filterMode) {
+    if (!filterText) return items;
+    const query = filterText.trim().toLowerCase();
+    if (!query) return items;
+
+    return items.filter(item => {
+      const baseText = item.content?.text || '';
+      const author = item.metadata?.author || item.savedBy?.username || '';
+      const platform = item.platform || '';
+      const combined = filterMode === 'full'
+        ? `${baseText} ${author} ${platform}`
+        : baseText;
+      return combined.toLowerCase().includes(query);
+    });
+  }
+
+  getCheckedIdSet(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return new Set();
+    return new Set(
+      [...container.querySelectorAll('input[type="checkbox"][data-id]:checked')].map(input => input.dataset.id)
+    );
+  }
+
+  attachDebouncedInput(element, handler, delay = 200) {
+    if (!element) return;
+    let timer = null;
+    element.addEventListener('input', (event) => {
+      const value = event.target.value;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => handler(value), delay);
+    });
+  }
+
+  updateSimilarityLabel(value) {
+    const label = document.getElementById('ai-similarity-label');
+    if (!label) return;
+    const config = this.getSimilarityConfig(value);
+    label.textContent = config.label;
+  }
+
+  getSimilarityConfig(value = null) {
+    const sliderValue = value !== null ? Number(value) : Number(this.aiFilters.sensitivity);
+    if (sliderValue <= 33) {
+      return { label: 'Strict', threshold: 0.25, maxSuggestions: 30 };
+    }
+    if (sliderValue >= 67) {
+      return { label: 'Loose', threshold: 0.12, maxSuggestions: 75 };
+    }
+    return { label: 'Balanced', threshold: 0.18, maxSuggestions: 50 };
+  }
+
+  tokenizeText(text) {
+    if (!text) return new Set();
+    const stopwords = new Set([
+      'the', 'and', 'for', 'with', 'that', 'this', 'you', 'your', 'from', 'are',
+      'was', 'were', 'been', 'have', 'has', 'had', 'but', 'not', 'they', 'their',
+      'about', 'into', 'out', 'over', 'under', 'more', 'less', 'just', 'like',
+      'what', 'when', 'where', 'who', 'why', 'how', 'can', 'could', 'would',
+      'should', 'a', 'an', 'of', 'to', 'in', 'on', 'it', 'is', 'as', 'at', 'by'
+    ]);
+
+    const tokens = text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter(token => token.length > 2 && !stopwords.has(token));
+
+    return new Set(tokens);
+  }
+
+  getItemTokens(item) {
+    if (this.aiTokenCache.has(item.id)) {
+      return this.aiTokenCache.get(item.id);
+    }
+
+    const combined = [
+      item.content?.text || '',
+      item.metadata?.author || '',
+      item.platform || ''
+    ].join(' ');
+
+    const tokens = this.tokenizeText(combined);
+    this.aiTokenCache.set(item.id, tokens);
+    return tokens;
+  }
+
+  computeSimilarity(tokensA, tokensB) {
+    if (!tokensA.size || !tokensB.size) return 0;
+
+    let intersection = 0;
+    tokensA.forEach(token => {
+      if (tokensB.has(token)) intersection += 1;
+    });
+    const union = tokensA.size + tokensB.size - intersection;
+    return union === 0 ? 0 : intersection / union;
+  }
+
+  async findSimilarItems() {
+    const status = document.getElementById('ai-similar-status');
+    const categoryName = document.getElementById('ai-category-name')?.value.trim();
+    if (!categoryName) {
+      alert('Please enter a category name first.');
+      return;
+    }
+
+    const seedIds = this.getCheckedIds('ai-seed-list');
+    if (seedIds.length === 0) {
+      alert('Select at least one example item.');
+      return;
+    }
+
+    const seedItems = seedIds.map(id => this.itemsById.get(id)).filter(Boolean);
+    const seedIdSet = new Set(seedItems.map(item => item.id));
+    const seedTokenSets = seedItems.map(item => this.getItemTokens(item));
+
+    const candidates = this.allItems.filter(item => {
+      const categories = item.categories || [];
+      const hasCategory = categories.includes(categoryName);
+      return !hasCategory && !seedIdSet.has(item.id);
+    });
+
+    const scored = [];
+    candidates.forEach(item => {
+      const itemTokens = this.getItemTokens(item);
+      const best = seedTokenSets.reduce((max, seedTokens) => {
+        const score = this.computeSimilarity(seedTokens, itemTokens);
+        return score > max ? score : max;
+      }, 0);
+      if (best > 0) {
+        scored.push({ item, score: best });
+      }
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const config = this.getSimilarityConfig();
+    const suggestions = scored.filter(entry => entry.score >= config.threshold).slice(0, config.maxSuggestions);
+    const scoreMap = new Map(suggestions.map(entry => [entry.item.id, entry.score]));
+    this.aiSuggestedItems = suggestions.map(entry => entry.item);
+    this.aiSuggestedScoreMap = scoreMap;
+
+    this.renderAiSuggestedList(this.aiSuggestedItems, this.aiSuggestedScoreMap);
+
+    if (status) {
+      status.textContent = suggestions.length
+        ? `Found ${suggestions.length} similar items.`
+        : 'No close matches found. Try selecting different examples.';
+    }
+  }
+
+  async applyCategoryFromModal() {
+    const categoryName = document.getElementById('ai-category-name')?.value.trim();
+    if (!categoryName) {
+      alert('Please enter a category name.');
+      return;
+    }
+
+    const seedIds = this.getCheckedIds('ai-seed-list');
+    const suggestedIds = this.getCheckedIds('ai-suggested-list');
+    const allIds = [...new Set([...seedIds, ...suggestedIds])];
+
+    if (allIds.length === 0) {
+      alert('Select at least one item to apply the category.');
+      return;
+    }
+
+    await this.ensureUserCategory(categoryName);
+    await this.applyCategoryToItems(categoryName, allIds);
+    this.closeAICategoryModal();
+  }
+
+  getCheckedIds(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return [];
+    return [...container.querySelectorAll('input[type="checkbox"][data-id]:checked')]
+      .map(input => input.dataset.id);
+  }
+
+  async ensureUserCategory(name) {
+    if (!this.userCategories.includes(name)) {
+      await this.addCustomCategory(name);
+    }
+  }
+
+  async applyCategoryToItems(category, itemIds) {
+    const updates = [];
+
+    itemIds.forEach(id => {
+      const item = this.itemsById.get(id);
+      if (!item) return;
+
+      const categories = (item.categories || []).filter(cat => cat !== 'Uncategorized');
+      if (!categories.includes(category)) {
+        categories.push(category);
+      }
+
+      updates.push({ id, categories });
+    });
+
+    if (updates.length === 0) return;
+
+    updates.forEach(update => {
+      const itemIndex = this.allItems.findIndex(i => i.id === update.id);
+      if (itemIndex !== -1) {
+        this.allItems[itemIndex].categories = update.categories;
+        this.itemsById.set(update.id, this.allItems[itemIndex]);
+      }
+    });
+
+    this.filterAndDisplayContent();
+    this.loadCategoriesFromContent();
+
+    const results = await Promise.all(
+      updates.map(update => chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: update.id,
+        updates: { categories: update.categories }
+      }))
+    );
+
+    const failures = results.filter(result => !result?.success);
+    if (failures.length) {
+      console.error('Some updates failed:', failures);
+      alert('Some items failed to update. Reloading content to sync.');
       this.loadContent();
     }
   }
@@ -307,6 +759,75 @@ class DashboardManager {
 
     document.getElementById('export-btn')?.addEventListener('click', () => {
       this.exportData();
+    });
+
+    // AI Tools
+    const aiFab = document.getElementById('ai-fab');
+    document.getElementById('ai-fab-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      aiFab?.classList.toggle('open');
+    });
+
+    document.getElementById('ai-categorize-uncategorized')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      aiFab?.classList.remove('open');
+      this.categorizeUncategorizedWithAI();
+    });
+
+    document.getElementById('ai-auto-categorize')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      aiFab?.classList.remove('open');
+      this.openAICategoryModal();
+    });
+
+    document.addEventListener('click', (event) => {
+      if (aiFab && !aiFab.contains(event.target)) {
+        aiFab.classList.remove('open');
+      }
+    });
+
+    document.getElementById('close-ai-category')?.addEventListener('click', () => {
+      this.closeAICategoryModal();
+    });
+
+    document.getElementById('ai-cancel-category')?.addEventListener('click', () => {
+      this.closeAICategoryModal();
+    });
+
+    document.getElementById('ai-find-similar')?.addEventListener('click', () => {
+      this.findSimilarItems();
+    });
+
+    document.getElementById('ai-apply-category')?.addEventListener('click', () => {
+      this.applyCategoryFromModal();
+    });
+
+    document.getElementById('ai-category-modal')?.addEventListener('click', (event) => {
+      if (event.target?.id === 'ai-category-modal') {
+        this.closeAICategoryModal();
+      }
+    });
+
+    this.attachDebouncedInput(document.getElementById('ai-seed-filter'), (value) => {
+      this.aiFilters.seedQuery = value;
+      this.updateAiSeedList();
+    });
+
+    this.attachDebouncedInput(document.getElementById('ai-suggested-filter'), (value) => {
+      this.aiFilters.suggestedQuery = value;
+      this.updateAiSuggestedList();
+    });
+
+    document.getElementById('ai-filter-mode')?.addEventListener('change', (event) => {
+      this.aiFilters.mode = event.target.value;
+      this.updateAiSeedList();
+      this.updateAiSuggestedList();
+    });
+
+    document.getElementById('ai-similarity-slider')?.addEventListener('input', (event) => {
+      const value = Number(event.target.value);
+      this.aiFilters.sensitivity = value;
+      this.updateSimilarityLabel(value);
     });
   }
 }

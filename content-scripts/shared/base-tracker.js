@@ -17,6 +17,7 @@ const MESSAGE_TYPES = {
   PAUSE_AUTO_SCROLL_IMPORT: 'PAUSE_AUTO_SCROLL_IMPORT',
   RESUME_AUTO_SCROLL_IMPORT: 'RESUME_AUTO_SCROLL_IMPORT',
   STOP_AUTO_SCROLL_IMPORT: 'STOP_AUTO_SCROLL_IMPORT',
+  GET_INTERACTION_BY_KEY: 'GET_INTERACTION_BY_KEY',
   PING: 'PING',
   GET_CURRENT_TAB_ID: 'GET_CURRENT_TAB_ID'
 };
@@ -47,9 +48,18 @@ class BasePlatformTracker {
       maxItems: 50,
       maxDurationMs: 5 * 60 * 1000,
       stepDelayMs: 1000,
-      minNoGrowthChecks: 3
+      minNoGrowthChecks: 3,
+      stepCount: 0,
+      dailyLimit: 200,
+      dailyCount: 0,
+      microPauseEveryMin: 5,
+      microPauseEveryMax: 8
     };
     this.autoScrollOverlay = null;
+    this.autoScrollInterruptHandler = null;
+    this.savedStatusCache = new Map();
+    this.currentIndicator = null;
+    this.currentIndicatorPost = null;
 
     console.log(`${this.platform} tracker initializing...`);
     this.init();
@@ -234,6 +244,22 @@ class BasePlatformTracker {
       const { postElement, postId, duration } = event.detail;
       console.log(`${this.platform}: Time threshold reached for post ${postId}`);
     });
+
+    window.addEventListener('ct-post-active', (event) => {
+      if (this.platform !== 'twitter') return;
+      const { postElement } = event.detail || {};
+      if (!postElement) return;
+      this.showSavedIndicatorForPost(postElement);
+    });
+
+    window.addEventListener('ct-post-inactive', (event) => {
+      if (this.platform !== 'twitter') return;
+      const { postElement } = event.detail || {};
+      if (!postElement) return;
+      if (postElement === this.currentIndicatorPost) {
+        this.removeSavedIndicator();
+      }
+    });
   }
 
   async loadSettings() {
@@ -368,18 +394,20 @@ class BasePlatformTracker {
     this.autoScrollState.startTime = Date.now();
     this.autoScrollState.lastScrollHeight = this.getScrollHeight();
     this.autoScrollState.noGrowthStreak = 0;
+    this.autoScrollState.stepCount = 0;
 
     this.ensureAutoScrollOverlay();
     this.updateAutoScrollOverlay('Running', 'Auto-scroll import started.');
 
+    this.bindAutoScrollInterrupts();
     this.runAutoScrollLoop();
     return { started: true };
   }
 
-  pauseAutoScrollImport() {
+  pauseAutoScrollImport(message = 'Auto-scroll import paused.') {
     if (!this.autoScrollState.running) return;
     this.autoScrollState.paused = true;
-    this.updateAutoScrollOverlay('Paused', 'Auto-scroll import paused.');
+    this.updateAutoScrollOverlay('Paused', message);
   }
 
   resumeAutoScrollImport() {
@@ -394,6 +422,7 @@ class BasePlatformTracker {
     this.autoScrollState.paused = false;
     this.autoScrollState.stopped = reason === 'stopped';
     this.autoScrollState.completed = reason === 'completed';
+    this.unbindAutoScrollInterrupts();
 
     const statusLabel = this.autoScrollState.completed ? 'Completed' : 'Stopped';
     const hint = this.autoScrollState.completed ?
@@ -403,6 +432,8 @@ class BasePlatformTracker {
   }
 
   async runAutoScrollLoop() {
+    this.autoScrollState.dailyCount = await this.getDailyAutoScrollCount();
+
     while (this.autoScrollState.running) {
       if (this.autoScrollState.paused) {
         await new Promise(resolve => setTimeout(resolve, 300));
@@ -418,11 +449,19 @@ class BasePlatformTracker {
         this.stopAutoScrollImport('completed');
         break;
       }
+      if (this.autoScrollState.dailyCount >= this.autoScrollState.dailyLimit) {
+        this.updateAutoScrollOverlay('Completed', 'Daily limit reached.', true);
+        this.stopAutoScrollImport('completed');
+        break;
+      }
 
       const beforeHeight = this.getScrollHeight();
-      window.scrollBy(0, Math.max(200, Math.floor(window.innerHeight * 0.9)));
+      const stepRatio = this.randomBetween(0.45, 0.85);
+      const stepSize = Math.max(200, Math.floor(window.innerHeight * stepRatio));
+      window.scrollBy(0, stepSize);
 
-      await new Promise(resolve => setTimeout(resolve, this.autoScrollState.stepDelayMs));
+      const stepDelay = this.randomBetween(800, 2500);
+      await new Promise(resolve => setTimeout(resolve, stepDelay));
 
       const captured = await this.bulkCaptureVisiblePosts({
         force: true,
@@ -430,6 +469,8 @@ class BasePlatformTracker {
       });
       if (captured > 0) {
         this.autoScrollState.importedCount += captured;
+        this.autoScrollState.dailyCount += captured;
+        await this.incrementDailyAutoScrollCount(captured);
       }
 
       const afterHeight = this.getScrollHeight();
@@ -444,11 +485,86 @@ class BasePlatformTracker {
         `Imported ${this.autoScrollState.importedCount} items`
       );
 
+      this.autoScrollState.stepCount += 1;
+      if (this.shouldMicroPause()) {
+        this.updateAutoScrollOverlay('Running', 'Taking a short break...');
+        await new Promise(resolve => setTimeout(resolve, this.randomBetween(3000, 8000)));
+      }
+
       if (this.autoScrollState.noGrowthStreak >= this.autoScrollState.minNoGrowthChecks) {
         this.stopAutoScrollImport('completed');
         break;
       }
     }
+  }
+
+  shouldMicroPause() {
+    const rangeMin = this.autoScrollState.microPauseEveryMin;
+    const rangeMax = this.autoScrollState.microPauseEveryMax;
+    const target = this.randomInt(rangeMin, rangeMax);
+    return this.autoScrollState.stepCount > 0 && this.autoScrollState.stepCount % target === 0;
+  }
+
+  randomBetween(min, max) {
+    return Math.random() * (max - min) + min;
+  }
+
+  randomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  bindAutoScrollInterrupts() {
+    if (this.autoScrollInterruptHandler) return;
+    this.autoScrollInterruptHandler = () => {
+      if (this.autoScrollState.running && !this.autoScrollState.paused) {
+        this.pauseAutoScrollImport('User activity detected. Auto-scroll paused.');
+      }
+    };
+    window.addEventListener('wheel', this.autoScrollInterruptHandler, { passive: true });
+    window.addEventListener('mousedown', this.autoScrollInterruptHandler, { passive: true });
+    window.addEventListener('keydown', this.autoScrollInterruptHandler);
+    window.addEventListener('touchstart', this.autoScrollInterruptHandler, { passive: true });
+    document.addEventListener('visibilitychange', this.autoScrollInterruptHandler);
+  }
+
+  unbindAutoScrollInterrupts() {
+    if (!this.autoScrollInterruptHandler) return;
+    window.removeEventListener('wheel', this.autoScrollInterruptHandler);
+    window.removeEventListener('mousedown', this.autoScrollInterruptHandler);
+    window.removeEventListener('keydown', this.autoScrollInterruptHandler);
+    window.removeEventListener('touchstart', this.autoScrollInterruptHandler);
+    document.removeEventListener('visibilitychange', this.autoScrollInterruptHandler);
+    this.autoScrollInterruptHandler = null;
+  }
+
+  async getDailyAutoScrollCount() {
+    const today = new Date().toISOString().slice(0, 10);
+    return new Promise((resolve) => {
+      chrome.storage.local.get('autoScrollDailyCount', (result) => {
+        const record = result.autoScrollDailyCount;
+        if (!record || record.date !== today) {
+          resolve(0);
+          return;
+        }
+        resolve(record.count || 0);
+      });
+    });
+  }
+
+  async incrementDailyAutoScrollCount(delta) {
+    const today = new Date().toISOString().slice(0, 10);
+    return new Promise((resolve) => {
+      chrome.storage.local.get('autoScrollDailyCount', (result) => {
+        const record = result.autoScrollDailyCount;
+        const current = record && record.date === today ? record.count || 0 : 0;
+        chrome.storage.local.set({
+          autoScrollDailyCount: {
+            date: today,
+            count: current + delta
+          }
+        }, () => resolve());
+      });
+    });
   }
 
   getScrollHeight() {
@@ -545,6 +661,72 @@ class BasePlatformTracker {
 
     if (stopBtn) {
       stopBtn.toggleAttribute('disabled', stopped);
+    }
+  }
+
+  async showSavedIndicatorForPost(postElement) {
+    if (!postElement || this.platform !== 'twitter') return;
+
+    if (this.currentIndicatorPost === postElement) {
+      return;
+    }
+
+    this.removeSavedIndicator();
+
+    const indicator = document.createElement('div');
+    indicator.className = 'ct-saved-indicator ct-saved-indicator--loading';
+    indicator.textContent = 'Checking...';
+
+    const computed = window.getComputedStyle(postElement);
+    if (computed.position === 'static') {
+      postElement.dataset.ctOriginalPosition = 'static';
+      postElement.style.position = 'relative';
+    }
+
+    postElement.appendChild(indicator);
+    this.currentIndicator = indicator;
+    this.currentIndicatorPost = postElement;
+
+    const isSaved = await this.isPostSaved(postElement);
+    if (this.currentIndicator !== indicator) return;
+
+    indicator.classList.remove('ct-saved-indicator--loading');
+    indicator.classList.add(isSaved ? 'ct-saved-indicator--saved' : 'ct-saved-indicator--unsaved');
+    indicator.textContent = isSaved ? 'Saved' : 'Not saved';
+  }
+
+  removeSavedIndicator() {
+    if (this.currentIndicator && this.currentIndicator.parentElement) {
+      this.currentIndicator.parentElement.removeChild(this.currentIndicator);
+    }
+    if (this.currentIndicatorPost && this.currentIndicatorPost.dataset.ctOriginalPosition === 'static') {
+      this.currentIndicatorPost.style.position = '';
+      delete this.currentIndicatorPost.dataset.ctOriginalPosition;
+    }
+    this.currentIndicator = null;
+    this.currentIndicatorPost = null;
+  }
+
+  async isPostSaved(postElement) {
+    const content = this.extractContent(postElement);
+    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+
+    if (this.savedStatusCache.has(contentKey)) {
+      return this.savedStatusCache.get(contentKey);
+    }
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
+        contentKey
+      });
+
+      const saved = !!(response && response.success && response.data);
+      this.savedStatusCache.set(contentKey, saved);
+      return saved;
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to check saved status`, error);
+      return false;
     }
   }
 

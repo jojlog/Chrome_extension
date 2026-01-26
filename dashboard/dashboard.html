@@ -164,7 +164,78 @@
           </div>
         </div>
       </div>
+
+      <!-- AI Category Modal -->
+      <div id="ai-category-modal" class="modal hidden">
+        <div class="modal-content modal-content-wide">
+          <div class="modal-header">
+            <h2>AI Category Builder</h2>
+            <button id="close-ai-category" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="ai-category-name">Category name</label>
+              <input type="text" id="ai-category-name" list="ai-category-options" placeholder="e.g. Design Systems">
+              <datalist id="ai-category-options"></datalist>
+              <small>Create a new category or pick an existing one.</small>
+            </div>
+
+            <div class="form-group">
+              <label>Match sensitivity</label>
+              <div class="ai-similarity-row">
+                <input type="range" id="ai-similarity-slider" min="0" max="100" step="1" value="50">
+                <span id="ai-similarity-label" class="ai-hint">Balanced</span>
+              </div>
+              <small>Strict = fewer, closer matches. Loose = more, broader matches.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-filter-mode">Filter scope</label>
+              <select id="ai-filter-mode" class="ai-filter-select">
+                <option value="text">Text only</option>
+                <option value="full">Text + author + platform</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Select example items</label>
+              <input type="text" id="ai-seed-filter" class="ai-filter-input" placeholder="Filter example items...">
+              <div id="ai-seed-list" class="ai-item-list"></div>
+              <small>Pick a few items that best represent the category.</small>
+            </div>
+
+            <div class="ai-modal-actions">
+              <button id="ai-find-similar" class="btn-secondary">Find similar</button>
+              <span id="ai-similar-status" class="ai-hint"></span>
+            </div>
+
+            <div class="form-group">
+              <label>Suggested matches</label>
+              <input type="text" id="ai-suggested-filter" class="ai-filter-input" placeholder="Filter suggested matches...">
+              <div id="ai-suggested-list" class="ai-item-list"></div>
+              <small>Review and uncheck anything you don’t want to include.</small>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="ai-apply-category" class="btn-primary">Apply category</button>
+            <button id="ai-cancel-category" class="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
     </main>
+  </div>
+
+  <!-- AI Floating Action Button -->
+  <div id="ai-fab" class="ai-fab">
+    <button id="ai-fab-btn" class="ai-fab-btn" aria-label="AI tools">
+      <span class="ai-fab-icon">✨</span>
+      <span class="ai-fab-text">AI</span>
+    </button>
+    <div id="ai-fab-menu" class="ai-fab-menu">
+      <div class="ai-fab-menu-header">AI Assist</div>
+      <button id="ai-categorize-uncategorized" class="ai-menu-item">Categorize uncategorized</button>
+      <button id="ai-auto-categorize" class="ai-menu-item">Create category from examples</button>
+    </div>
   </div>
 
   <script src="dashboard.js" type="module"></script>

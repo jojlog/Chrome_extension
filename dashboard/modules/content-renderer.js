@@ -62,7 +62,7 @@ export class ContentRenderer {
         wrapper.className = viewMode === 'grid' ? 'content-grid' : 'content-list';
 
         items.forEach(item => {
-            const card = this.createContentCard(item);
+            const card = this.createContentCard(item, viewMode);
             wrapper.appendChild(card);
         });
 
@@ -74,7 +74,7 @@ export class ContentRenderer {
      * @param {Object} item 
      * @returns {HTMLElement}
      */
-    createContentCard(item) {
+    createContentCard(item, viewMode) {
         const card = document.createElement('div');
         card.className = 'content-card';
         card.dataset.id = item.id;
@@ -164,7 +164,7 @@ export class ContentRenderer {
         body.appendChild(text);
 
         // Media preview if available
-        if (item.content.imageUrls && item.content.imageUrls.length > 0) {
+        if (viewMode === 'grid' && item.content.imageUrls && item.content.imageUrls.length > 0) {
             const imageContainer = document.createElement('div');
             imageContainer.className = 'media-preview';
             const img = document.createElement('img');

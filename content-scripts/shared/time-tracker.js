@@ -96,6 +96,14 @@ class TimeTracker {
     this.startTime = Date.now();
 
     console.log('Started tracking:', postId);
+
+    const event = new CustomEvent('ct-post-active', {
+      detail: {
+        postElement,
+        postId
+      }
+    });
+    window.dispatchEvent(event);
   }
 
   /**
@@ -125,6 +133,14 @@ class TimeTracker {
     if (newDuration >= this.threshold && currentDuration < this.threshold) {
       this.onThresholdReached(postElement, postId, newDuration);
     }
+
+    const event = new CustomEvent('ct-post-inactive', {
+      detail: {
+        postElement,
+        postId
+      }
+    });
+    window.dispatchEvent(event);
 
     // Reset active tracking
     this.activePost = null;

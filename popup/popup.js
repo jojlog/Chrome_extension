@@ -172,7 +172,8 @@ class PopupManager {
     toggleButton.textContent = buttonLabel;
     toggleButton.disabled = false;
     if (autoScrollButton) {
-      autoScrollButton.disabled = !supported || !pageMode || pageMode === 'feed';
+      // Enable when we're on a supported site even if pageMode isn't detected yet.
+      autoScrollButton.disabled = !supported;
     }
   }
 
