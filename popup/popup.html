@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Tracker</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <h1>Content Tracker</h1>
+      <button id="open-dashboard" class="btn-icon" title="Open Dashboard">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
+          <path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z"/>
+        </svg>
+      </button>
+    </header>
+
+    <section class="stats-section">
+      <div class="stat-card">
+        <div class="stat-value" id="total-saved">0</div>
+        <div class="stat-label">Total Saved</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="today-saved">0</div>
+        <div class="stat-label">Today</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="week-saved">0</div>
+        <div class="stat-label">This Week</div>
+      </div>
+    </section>
+
+    <section class="platforms-section">
+      <h2>By Platform</h2>
+      <div class="platform-stats">
+        <div class="platform-item">
+          <span class="platform-icon instagram"></span>
+          <span class="platform-count" id="instagram-count">0</span>
+        </div>
+        <div class="platform-item">
+          <span class="platform-icon twitter"></span>
+          <span class="platform-count" id="twitter-count">0</span>
+        </div>
+        <div class="platform-item">
+          <span class="platform-icon linkedin"></span>
+          <span class="platform-count" id="linkedin-count">0</span>
+        </div>
+        <div class="platform-item">
+          <span class="platform-icon tiktok"></span>
+          <span class="platform-count" id="tiktok-count">0</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="recent-section">
+      <h2>Recent Saves</h2>
+      <div id="recent-list" class="recent-list">
+        <div class="loading">Loading...</div>
+      </div>
+    </section>
+
+    <footer class="popup-footer">
+      <button id="settings-btn" class="btn-secondary">Settings</button>
+      <button id="refresh-btn" class="btn-secondary">Refresh</button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

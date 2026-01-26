@@ -1,0 +1,107 @@
+{
+  "manifest_version": 3,
+  "name": "Social Media Content Tracker",
+  "version": "1.0.0",
+  "description": "Automatically track, save, and categorize your social media interactions across Instagram, Twitter, LinkedIn, and TikTok",
+
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "tabs",
+    "scripting",
+    "notifications",
+    "alarms"
+  ],
+
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://twitter.com/*",
+    "https://x.com/*",
+    "https://www.linkedin.com/*",
+    "https://www.tiktok.com/*"
+  ],
+
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": [
+        "content-scripts/shared/status-popup.js",
+        "content-scripts/shared/time-tracker.js",
+        "content-scripts/shared/content-extractor.js",
+        "content-scripts/shared/base-tracker.js",
+        "content-scripts/instagram/instagram-selectors.js",
+        "content-scripts/instagram/instagram-tracker.js"
+      ],
+      "css": ["content-scripts/shared/status-popup.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "js": [
+        "content-scripts/shared/status-popup.js",
+        "content-scripts/shared/time-tracker.js",
+        "content-scripts/shared/content-extractor.js",
+        "content-scripts/shared/base-tracker.js",
+        "content-scripts/twitter/twitter-selectors.js",
+        "content-scripts/twitter/twitter-tracker.js"
+      ],
+      "css": ["content-scripts/shared/status-popup.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.linkedin.com/*"],
+      "js": [
+        "content-scripts/shared/status-popup.js",
+        "content-scripts/shared/time-tracker.js",
+        "content-scripts/shared/content-extractor.js",
+        "content-scripts/shared/base-tracker.js",
+        "content-scripts/linkedin/linkedin-selectors.js",
+        "content-scripts/linkedin/linkedin-tracker.js"
+      ],
+      "css": ["content-scripts/shared/status-popup.css"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.tiktok.com/*"],
+      "js": [
+        "content-scripts/shared/status-popup.js",
+        "content-scripts/shared/time-tracker.js",
+        "content-scripts/shared/content-extractor.js",
+        "content-scripts/shared/base-tracker.js",
+        "content-scripts/tiktok/tiktok-selectors.js",
+        "content-scripts/tiktok/tiktok-tracker.js"
+      ],
+      "css": ["content-scripts/shared/status-popup.css"],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "assets/icons/icon16.png",
+      "32": "assets/icons/icon32.png",
+      "48": "assets/icons/icon48.png",
+      "128": "assets/icons/icon128.png"
+    }
+  },
+
+  "icons": {
+    "16": "assets/icons/icon16.png",
+    "32": "assets/icons/icon32.png",
+    "48": "assets/icons/icon48.png",
+    "128": "assets/icons/icon128.png"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Tracker Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Content Tracker</h1>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <h3>Platforms</h3>
+          <ul class="platform-list">
+            <li data-platform="all" class="active">All Platforms</li>
+            <li data-platform="instagram">Instagram</li>
+            <li data-platform="twitter">Twitter</li>
+            <li data-platform="linkedin">LinkedIn</li>
+            <li data-platform="tiktok">TikTok</li>
+          </ul>
+        </div>
+
+        <div class="nav-section">
+          <h3>Categories</h3>
+          <ul id="category-list" class="category-list">
+            <li data-category="all" class="active">All Categories</li>
+          </ul>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="settings-btn" class="btn-sidebar">Settings</button>
+        <button id="export-btn" class="btn-sidebar">Export Data</button>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="dashboard-header">
+        <div class="search-bar">
+          <input type="text" id="search-input" placeholder="Search saved content...">
+        </div>
+
+        <div class="header-actions">
+          <select id="sort-select">
+            <option value="date-desc">Newest First</option>
+            <option value="date-asc">Oldest First</option>
+            <option value="engagement">Most Engagement</option>
+            <option value="duration">Most Viewed</option>
+          </select>
+
+          <button id="view-toggle" class="btn-toggle">Grid View</button>
+        </div>
+      </header>
+
+      <div id="content-area" class="content-area">
+        <div class="loading">Loading your saved content...</div>
+      </div>
+
+      <!-- Settings Modal -->
+      <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Settings</h2>
+            <button id="close-settings" class="btn-close">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="openai-api-key">OpenAI API Key (Optional)</label>
+              <input type="password" id="openai-api-key" placeholder="sk-proj-...">
+              <small>Enter your OpenAI API key. <a href="https://platform.openai.com/api-keys" target="_blank">Get one here</a></small>
+            </div>
+
+            <div class="form-group">
+              <label for="gemini-api-key">Google Gemini API Key (Optional)</label>
+              <input type="password" id="gemini-api-key" placeholder="AIza...">
+              <small>Enter your Gemini API key. <a href="https://makersuite.google.com/app/apikey" target="_blank">Get one here</a></small>
+            </div>
+
+            <div class="form-group">
+              <small style="color: #667eea; font-weight: bold;">💡 Tip: If you enter both API keys, OpenAI will be used first, and Gemini will be used automatically as a fallback.</small>
+            </div>
+
+            <!-- Legacy fields for backward compatibility (hidden) -->
+            <div class="form-group" style="display: none;">
+              <label for="ai-provider">AI Provider (Legacy)</label>
+              <select id="ai-provider">
+                <option value="openai">OpenAI (GPT)</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="display: none;">
+              <label for="api-key">API Key (Legacy)</label>
+              <input type="password" id="api-key" placeholder="Enter your API key">
+            </div>
+
+            <div class="form-group">
+              <label for="time-threshold">Time Threshold (seconds)</label>
+              <input type="number" id="time-threshold" min="1" max="60" value="5">
+              <small>Minimum time viewing a post to consider saving it</small>
+            </div>
+
+            <div class="form-group">
+              <label>Enabled Platforms</label>
+              <div class="checkbox-group">
+                <label><input type="checkbox" id="enable-instagram" checked> Instagram</label>
+                <label><input type="checkbox" id="enable-twitter" checked> Twitter</label>
+                <label><input type="checkbox" id="enable-linkedin" checked> LinkedIn</label>
+                <label><input type="checkbox" id="enable-tiktok" checked> TikTok</label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Manage Custom Categories</label>
+              <div id="custom-categories-list" class="category-edit-list">
+                <!-- Custom categories will be rendered here by JavaScript -->
+              </div>
+              <div class="category-add-group">
+                <input type="text" id="new-category-input" placeholder="Add new category">
+                <button id="add-category-btn" class="btn-secondary">Add</button>
+              </div>
+              <small>Add, edit, or remove categories that you use for manual classification.</small>
+            </div>
+
+            <!-- Separator for better UI -->
+            <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+
+          </div>
+
+          <div class="modal-footer">
+            <button id="save-settings" class="btn-primary">Save Settings</button>
+            <button id="cancel-settings" class="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

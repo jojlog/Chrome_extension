@@ -1,0 +1,85 @@
+.ct-status-popup {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background-color: #333;
+  color: white;
+  padding: 14px 20px;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(20px);
+  transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out, visibility 0.3s ease-in-out;
+  z-index: 10000;
+  max-width: 350px;
+  min-width: 250px;
+  cursor: pointer;
+}
+
+.ct-status-popup--visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.ct-status-popup--success {
+  background-color: #2e7d32;
+  /* Darker green for success */
+  border-left: 4px solid #4CAF50;
+}
+
+.ct-status-popup--failure {
+  background-color: #c62828;
+  /* Darker red for failure */
+  border-left: 4px solid #F44336;
+}
+
+.ct-status-popup__title {
+  font-weight: bold;
+  font-size: 16px;
+  margin-bottom: 6px;
+}
+
+.ct-status-popup__message {
+  font-size: 13px;
+  margin-bottom: 4px;
+  opacity: 0.9;
+}
+
+.ct-status-popup__category-info {
+  font-size: 13px;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  display: inline-block;
+}
+
+.ct-status-popup__ai-status {
+  font-size: 12px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+/* AI Status - Success */
+.ct-status-popup__ai-status--success {
+  color: #a5d6a7;
+  /* Light green */
+}
+
+/* AI Status - Failed */
+.ct-status-popup__ai-status--failed {
+  color: #ffcdd2;
+  /* Light red */
+}
+
+/* AI Status - Pending */
+.ct-status-popup__ai-status--pending {
+  color: #ffe0b2;
+  /* Light orange */
+}
