@@ -7,6 +7,23 @@ const TikTokSelectors = {
     'div[class*="DivItemContainer"]'
   ],
 
+  // Profile grids (favorites/liked)
+  PROFILE_GRID_ITEM: [
+    'div[data-e2e="user-post-item"]',
+    'div[data-e2e="user-liked-item"]',
+    'div[data-e2e="user-favorite-item"]',
+    'a[href*="/video/"]'
+  ],
+
+  PROFILE_GRID_LINK: [
+    'a[href*="/video/"]'
+  ],
+
+  PROFILE_GRID_THUMB: [
+    'img',
+    'picture img'
+  ],
+
   // Interaction buttons
   LIKE_BUTTON: [
     'button[data-e2e="like-icon"]',

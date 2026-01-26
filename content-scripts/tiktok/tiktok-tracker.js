@@ -32,16 +32,23 @@ class TikTokTracker extends BasePlatformTracker {
     if (this.isLikeButton(target)) {
       const postElement = this.findPostElement(target);
       if (postElement && this.isLiking(target)) {
-        setTimeout(() => this.handleInteraction('like', postElement), 100);
+        setTimeout(() => this.captureInteraction('like', postElement), 100);
       }
     }
 
     if (this.isFavoriteButton(target)) {
       const postElement = this.findPostElement(target);
       if (postElement && this.isFavoriting(target)) {
-        setTimeout(() => this.handleInteraction('save', postElement), 100);
+        setTimeout(() => this.captureInteraction('save', postElement), 100);
       }
     }
+  }
+
+  getPostContainerSelectors() {
+    if (this.pageMode && this.pageMode !== 'feed' && TikTokSelectors.PROFILE_GRID_ITEM) {
+      return [...TikTokSelectors.PROFILE_GRID_ITEM, ...TikTokSelectors.POST_CONTAINER];
+    }
+    return TikTokSelectors.POST_CONTAINER;
   }
 
   isLikeButton(element) {
@@ -125,6 +132,16 @@ class TikTokTracker extends BasePlatformTracker {
   }
 
   extractContent(postElement) {
+    if (this.pageMode && this.pageMode !== 'feed') {
+      const linkCandidate = postElement.tagName === 'A' ?
+        postElement :
+        ContentExtractor.findWithFallback(postElement, TikTokSelectors.PROFILE_GRID_LINK);
+      const textCandidate = ContentExtractor.findWithFallback(postElement, TikTokSelectors.POST_TEXT);
+      if (linkCandidate && !textCandidate) {
+        return this.extractProfileGridContent(postElement);
+      }
+    }
+
     const textElement = ContentExtractor.findWithFallback(postElement, TikTokSelectors.POST_TEXT);
     const text = textElement ? ContentExtractor.extractText(textElement) : '';
 
@@ -140,6 +157,26 @@ class TikTokTracker extends BasePlatformTracker {
       videoUrl: videoUrl,
       url: url,
       hashtags: hashtags
+    };
+  }
+
+  extractProfileGridContent(postElement) {
+    const link = postElement.tagName === 'A' ?
+      postElement :
+      ContentExtractor.findWithFallback(postElement, TikTokSelectors.PROFILE_GRID_LINK);
+    const url = link ? link.href : window.location.href;
+
+    const imageUrls = ContentExtractor.extractImageUrls(
+      postElement,
+      TikTokSelectors.PROFILE_GRID_THUMB.join(',')
+    );
+
+    return {
+      text: '',
+      imageUrls: imageUrls,
+      videoUrl: null,
+      url: url,
+      hashtags: []
     };
   }
 
@@ -206,6 +243,21 @@ class TikTokTracker extends BasePlatformTracker {
       console.error('Error extracting logged-in user:', error);
       return null;
     }
+  }
+
+  /**
+   * Detect the current page mode for TikTok
+   * @returns {string|null} 'favorites', 'likes', or null
+   */
+  detectPageMode() {
+    const path = window.location.pathname;
+    if (path.match(/^\/@[^\/]+\/favorites\/?$/)) {
+      return 'favorites';
+    }
+    if (path.match(/^\/@[^\/]+\/liked\/?$/)) {
+      return 'likes';
+    }
+    return null;
   }
 }
 

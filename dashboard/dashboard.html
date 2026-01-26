@@ -124,6 +124,16 @@
             </div>
 
             <div class="form-group">
+              <label>Saved/Liked Import</label>
+              <div class="checkbox-group">
+                <label><input type="checkbox" id="auto-import-saved"> Auto-import from saved/liked pages</label>
+                <label><input type="checkbox" id="suppress-import-notifications"> Suppress import notifications</label>
+                <label><input type="checkbox" id="skip-ai-for-imports"> Skip AI categorization for imports</label>
+              </div>
+              <small>Imports only run when you visit saved/liked pages and can be noisy without these controls.</small>
+            </div>
+
+            <div class="form-group">
               <label>Manage Custom Categories</label>
               <div id="custom-categories-list" class="category-edit-list">
                 <!-- Custom categories will be rendered here by JavaScript -->

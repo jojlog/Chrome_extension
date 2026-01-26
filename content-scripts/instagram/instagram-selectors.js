@@ -9,6 +9,25 @@ const InstagramSelectors = {
     'div._aatk' // Common Instagram class pattern
   ],
 
+  // Saved grid items
+  SAVED_GRID_ITEM: [
+    'div[role="main"] article a[href*="/p/"]',
+    'div[role="main"] article a[href*="/reel/"]',
+    'div[role="main"] a[href*="/p/"]',
+    'div[role="main"] a[href*="/reel/"]'
+  ],
+
+  SAVED_GRID_LINK: [
+    'a[href*="/p/"]',
+    'a[href*="/reel/"]'
+  ],
+
+  SAVED_GRID_IMAGE: [
+    'img[alt]:not([alt=""])',
+    'img[srcset]',
+    'img[src]'
+  ],
+
   // Interaction buttons
   LIKE_BUTTON: [
     'svg[aria-label*="Like"]',

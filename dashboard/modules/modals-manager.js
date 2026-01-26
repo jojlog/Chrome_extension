@@ -47,6 +47,9 @@ export class ModalsManager {
             document.getElementById('enable-linkedin').checked = settings.enabledPlatforms.linkedin !== false;
             document.getElementById('enable-tiktok').checked = settings.enabledPlatforms.tiktok !== false;
         }
+        document.getElementById('auto-import-saved').checked = settings.autoImportSavedPages === true;
+        document.getElementById('suppress-import-notifications').checked = settings.suppressImportNotifications !== false;
+        document.getElementById('skip-ai-for-imports').checked = settings.skipAIForImports !== false;
 
         this.renderCustomCategories(userCategories);
 
@@ -82,7 +85,10 @@ export class ModalsManager {
                 twitter: document.getElementById('enable-twitter').checked,
                 linkedin: document.getElementById('enable-linkedin').checked,
                 tiktok: document.getElementById('enable-tiktok').checked
-            }
+            },
+            autoImportSavedPages: document.getElementById('auto-import-saved').checked,
+            suppressImportNotifications: document.getElementById('suppress-import-notifications').checked,
+            skipAIForImports: document.getElementById('skip-ai-for-imports').checked
         };
 
         await this.dashboardManager.saveSettings(updates);

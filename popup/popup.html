@@ -11,7 +11,10 @@
 <body>
   <div class="popup-container">
     <header class="popup-header">
-      <h1>Content Tracker</h1>
+      <div class="header-title">
+        <h1>Content Tracker</h1>
+        <p class="header-subtitle">Save without thinking.</p>
+      </div>
       <button id="open-dashboard" class="btn-icon" title="Open Dashboard">
         <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
           <path
@@ -19,6 +22,25 @@
         </svg>
       </button>
     </header>
+
+    <section class="auto-import-section">
+      <div class="auto-import-card">
+        <div class="auto-import-head">
+          <div>
+            <h2>Auto-Import</h2>
+            <p id="import-subtitle" class="section-subtitle">Capture saved/liked posts when you browse.</p>
+          </div>
+          <span id="import-status" class="status-pill status--off">
+            <span class="status-dot"></span>
+            <span class="status-text">Off</span>
+          </span>
+        </div>
+        <div class="auto-import-body">
+          <p id="import-context" class="import-context">Open a supported site to see page status.</p>
+          <button id="import-toggle" class="btn-primary">Enable Auto-Import</button>
+        </div>
+      </div>
+    </section>
 
     <section class="stats-section">
       <div class="stat-card">
@@ -70,7 +92,7 @@
     </footer>
   </div>
 
-  <script src="popup.js" type="module"></script>
+  <script src="popup.js"></script>
 </body>
 
 </html>

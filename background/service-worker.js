@@ -146,26 +146,32 @@ async function handleSaveInteraction(interaction, sender) {
       interaction.tabId = sender.tab.id;
     }
 
-    const success = await storageManager.saveInteraction(interaction);
+    const settings = await storageManager.getSettings();
+    const isImport = !!(interaction.importedFrom || (interaction.interactionType || '').startsWith('imported_'));
+    const skipAI = isImport && settings?.skipAIForImports;
+    const suppressNotifications = isImport && settings?.suppressImportNotifications;
 
-    if (success) {
+    const result = await storageManager.saveInteraction(interaction, { skipAI });
+
+    if (result.success && !result.skippedDuplicate) {
       // Show notification
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: chrome.runtime.getURL('assets/icons/icon128.png'),
-        title: 'Content Saved',
-        message: `Saved from ${interaction.platform}`,
-        priority: 0
-      });
+      if (!suppressNotifications) {
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('assets/icons/icon128.png'),
+          title: 'Content Saved',
+          message: `Saved from ${interaction.platform}`,
+          priority: 0
+        });
 
-      console.log('Notification created for saved interaction');
-
+        console.log('Notification created for saved interaction');
+      }
 
       // Trigger AI processing
       processAIQueue();
     }
 
-    return { success };
+    return { success: result.success, skippedDuplicate: result.skippedDuplicate };
   } catch (error) {
     console.error('Error in handleSaveInteraction:', error);
     return { success: false, error: error.message };

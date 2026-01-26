@@ -246,6 +246,91 @@ class ContentExtractor {
   }
 
   /**
+   * Create a stable key for de-duplication
+   * @param {string} platform - Platform name
+   * @param {string} url - Content URL
+   * @param {string} text - Content text (optional)
+   * @returns {string} Stable content key
+   */
+  static createContentKey(platform, url, text = '') {
+    const normalizedUrl = this.normalizeUrlForKey(url, platform);
+    if (normalizedUrl) {
+      return `${platform}:${normalizedUrl}`;
+    }
+
+    const cleanedText = this.cleanText(text).slice(0, 200);
+    if (cleanedText) {
+      return `${platform}:text:${this.hashString(cleanedText)}`;
+    }
+
+    const fallbackUrl = this.normalizeUrlForKey(window.location.href, platform) || window.location.href;
+    return `${platform}:location:${this.hashString(fallbackUrl)}`;
+  }
+
+  /**
+   * Normalize a URL for stable keying
+   * @param {string} url - Input URL
+   * @param {string} platform - Platform name
+   * @returns {string} Normalized URL
+   */
+  static normalizeUrlForKey(url, platform) {
+    if (!url) return '';
+    try {
+      const parsed = new URL(url, window.location.href);
+      parsed.hash = '';
+
+      const hostname = parsed.hostname.toLowerCase();
+      if (platform === 'twitter' && (hostname.endsWith('twitter.com') || hostname.endsWith('x.com'))) {
+        parsed.hostname = 'x.com';
+      } else {
+        parsed.hostname = hostname;
+      }
+
+      const trackingKeys = new Set([
+        'fbclid',
+        'gclid',
+        'igshid',
+        'ref',
+        'ref_src',
+        'source',
+        's',
+        'share',
+        'si',
+        'mc_cid',
+        'mc_eid'
+      ]);
+
+      const params = parsed.searchParams;
+      [...params.keys()].forEach((key) => {
+        if (trackingKeys.has(key) || key.startsWith('utm_')) {
+          params.delete(key);
+        }
+      });
+
+      parsed.search = params.toString() ? `?${params.toString()}` : '';
+      parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+
+      return `${parsed.origin}${parsed.pathname}${parsed.search}`;
+    } catch (error) {
+      return url;
+    }
+  }
+
+  /**
+   * Simple deterministic hash for strings
+   * @param {string} input - Input string
+   * @returns {string} Hash string
+   */
+  static hashString(input) {
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      hash = ((hash << 5) - hash) + input.charCodeAt(i);
+      hash |= 0;
+    }
+    return Math.abs(hash).toString(36);
+  }
+
+  /**
    * Extract author information
    * @param {HTMLElement} element - Element containing author info
    * @param {string} nameSelector - Selector for author name

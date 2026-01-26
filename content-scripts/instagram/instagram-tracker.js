@@ -67,6 +67,9 @@ class InstagramTracker extends BasePlatformTracker {
    * @returns {Array<string>}
    */
   getPostContainerSelectors() {
+    if (this.pageMode === 'saved' && InstagramSelectors.SAVED_GRID_ITEM) {
+      return [...InstagramSelectors.SAVED_GRID_ITEM, ...InstagramSelectors.POST_CONTAINER];
+    }
     return InstagramSelectors.POST_CONTAINER;
   }
 
@@ -242,6 +245,16 @@ class InstagramTracker extends BasePlatformTracker {
    * @returns {Object}
    */
   extractContent(postElement) {
+    if (this.pageMode === 'saved') {
+      const linkCandidate = postElement.tagName === 'A' ?
+        postElement :
+        ContentExtractor.findWithFallback(postElement, InstagramSelectors.SAVED_GRID_LINK);
+      const textCandidate = ContentExtractor.findWithFallback(postElement, InstagramSelectors.POST_TEXT);
+      if (linkCandidate && !textCandidate) {
+        return this.extractSavedGridContent(postElement);
+      }
+    }
+
     // Extract text
     const textElement = ContentExtractor.findWithFallback(postElement, InstagramSelectors.POST_TEXT);
     const text = textElement ? ContentExtractor.extractText(textElement) : '';
@@ -268,6 +281,26 @@ class InstagramTracker extends BasePlatformTracker {
       videoUrl: videoUrl,
       url: url,
       hashtags: hashtags
+    };
+  }
+
+  extractSavedGridContent(postElement) {
+    const link = postElement.tagName === 'A' ?
+      postElement :
+      ContentExtractor.findWithFallback(postElement, InstagramSelectors.SAVED_GRID_LINK);
+    const url = link ? link.href : window.location.href;
+
+    const imageUrls = ContentExtractor.extractImageUrls(
+      postElement,
+      InstagramSelectors.SAVED_GRID_IMAGE.join(',')
+    );
+
+    return {
+      text: '',
+      imageUrls: imageUrls,
+      videoUrl: null,
+      url: url,
+      hashtags: []
     };
   }
 
@@ -349,6 +382,18 @@ class InstagramTracker extends BasePlatformTracker {
       console.error('Error extracting logged-in user:', error);
       return null;
     }
+  }
+
+  /**
+   * Detect the current page mode for Instagram
+   * @returns {string|null} 'saved' or null
+   */
+  detectPageMode() {
+    const path = window.location.pathname;
+    if (path.match(/^\/[^\/]+\/saved\/?$/)) {
+      return 'saved';
+    }
+    return null;
   }
 }
 

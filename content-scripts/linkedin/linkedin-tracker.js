@@ -32,16 +32,20 @@ class LinkedInTracker extends BasePlatformTracker {
     if (this.isLikeButton(target)) {
       const postElement = this.findPostElement(target);
       if (postElement && this.isLiking(target)) {
-        setTimeout(() => this.handleInteraction('like', postElement), 100);
+        setTimeout(() => this.captureInteraction('like', postElement), 100);
       }
     }
 
     if (this.isSaveButton(target)) {
       const postElement = this.findPostElement(target);
       if (postElement && this.isSaving(target)) {
-        setTimeout(() => this.handleInteraction('save', postElement), 100);
+        setTimeout(() => this.captureInteraction('save', postElement), 100);
       }
     }
+  }
+
+  getPostContainerSelectors() {
+    return LinkedInSelectors.POST_CONTAINER;
   }
 
   isLikeButton(element) {
@@ -201,6 +205,18 @@ class LinkedInTracker extends BasePlatformTracker {
       console.error('Error extracting logged-in user:', error);
       return null;
     }
+  }
+
+  /**
+   * Detect the current page mode for LinkedIn
+   * @returns {string|null} 'saved' or null
+   */
+  detectPageMode() {
+    const path = window.location.pathname;
+    if (path.includes('/my-items/saved-posts')) {
+      return 'saved';
+    }
+    return null;
   }
 }
 

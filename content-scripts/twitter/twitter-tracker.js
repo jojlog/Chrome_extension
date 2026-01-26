@@ -381,6 +381,26 @@ class TwitterTracker extends BasePlatformTracker {
       return null;
     }
   }
+
+  /**
+   * Detect the current page mode for Twitter/X
+   * @returns {string|null} 'bookmarks', 'likes', or null
+   */
+  detectPageMode() {
+    const url = window.location.href;
+
+    // Twitter bookmarks: x.com/i/bookmarks or twitter.com/i/bookmarks
+    if (url.includes('/i/bookmarks')) {
+      return 'bookmarks';
+    }
+
+    // Twitter likes: x.com/{username}/likes
+    if (url.match(/\/([\w]+)\/likes\/?$/)) {
+      return 'likes';
+    }
+
+    return null;
+  }
 }
 
 // Initialize tracker when script loads

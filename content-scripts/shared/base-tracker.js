@@ -10,6 +10,8 @@ const MESSAGE_TYPES = {
   GET_INTERACTION_BY_ID: 'GET_INTERACTION_BY_ID',
   UPDATE_INTERACTION: 'UPDATE_INTERACTION',
   DELETE_INTERACTION: 'DELETE_INTERACTION',
+  GET_SETTINGS: 'GET_SETTINGS',
+  GET_IMPORT_STATUS: 'GET_IMPORT_STATUS',
   PING: 'PING',
   GET_CURRENT_TAB_ID: 'GET_CURRENT_TAB_ID'
 };
@@ -24,6 +26,10 @@ class BasePlatformTracker {
     this.timeTracker = window.timeTracker;
     this.trackedPosts = new Set();
     this.pendingSaves = new Map();
+    this.capturedPostIds = new Set(); // Track posts already captured to avoid duplicates
+    this.pageMode = null; // 'feed', 'bookmarks', 'likes', 'saved', etc.
+    this.settings = null;
+    this.bulkCaptureTimeout = null;
 
     console.log(`${this.platform} tracker initializing...`);
     this.init();
@@ -49,15 +55,41 @@ class BasePlatformTracker {
         }
         sendResponse({ received: true });
       }
+      if (message.type === MESSAGE_TYPES.GET_IMPORT_STATUS) {
+        sendResponse({
+          success: true,
+          data: {
+            platform: this.platform,
+            pageMode: this.pageMode || 'feed',
+            autoImportEnabled: !!this.settings?.autoImportSavedPages,
+            autoImportPaused: !!this.settings?.autoImportPaused
+          }
+        });
+      }
       return true;
     });
   }
 
   async init() {
     await this.waitForPageLoad();
+
+    this.settings = await this.loadSettings();
+    this.setupSettingsListener();
+
+    // Detect page mode (saved, bookmarks, likes, etc.)
+    this.pageMode = this.detectPageMode();
+    console.log(`${this.platform}: Page mode detected: ${this.pageMode || 'feed'}`);
+
+    this.setupUrlChangeObserver();
     this.setupMutationObserver();
     this.setupEventListeners();
     this.setupTimeThresholdListener();
+
+    // If on a saved/liked page, trigger bulk capture after a short delay
+    if (this.shouldAutoImport()) {
+      setTimeout(() => this.bulkCaptureVisiblePosts(), 1500);
+    }
+
     console.log(`${this.platform} tracker initialized`);
   }
 
@@ -82,13 +114,18 @@ class BasePlatformTracker {
   }
 
   handleMutations(mutations) {
+    let shouldScheduleImport = false;
     mutations.forEach(mutation => {
       mutation.addedNodes.forEach(node => {
         if (node.nodeType === Node.ELEMENT_NODE) {
           this.checkForNewPosts(node);
+          shouldScheduleImport = true;
         }
       });
     });
+    if (shouldScheduleImport) {
+      this.scheduleBulkCapture();
+    }
   }
 
   checkForNewPosts(node) {
@@ -159,6 +196,108 @@ class BasePlatformTracker {
     });
   }
 
+  async loadSettings() {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_SETTINGS });
+      if (response && response.success) {
+        return response.data;
+      }
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to load settings`, error);
+    }
+    return {
+      autoImportSavedPages: false,
+      autoImportPaused: false,
+      suppressImportNotifications: true,
+      skipAIForImports: true
+    };
+  }
+
+  shouldAutoImport() {
+    return !!(
+      this.pageMode &&
+      this.pageMode !== 'feed' &&
+      this.settings &&
+      this.settings.autoImportSavedPages &&
+      !this.settings.autoImportPaused
+    );
+  }
+
+  setupSettingsListener() {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName !== 'local' || !changes.settings) return;
+      const newSettings = changes.settings.newValue;
+      if (newSettings) {
+        this.settings = newSettings;
+      }
+
+      if (!this.shouldAutoImport()) {
+        this.cancelBulkCapture();
+        return;
+      }
+
+      if (this.pageMode && this.pageMode !== 'feed') {
+        this.scheduleBulkCapture();
+      }
+    });
+  }
+
+  cancelBulkCapture() {
+    if (this.bulkCaptureTimeout) {
+      clearTimeout(this.bulkCaptureTimeout);
+      this.bulkCaptureTimeout = null;
+    }
+  }
+
+  setupUrlChangeObserver() {
+    if (!window.__ctUrlObserverInstalled) {
+      const notify = () => window.dispatchEvent(new Event('ct:urlchange'));
+      const wrap = (method) => {
+        const original = history[method];
+        if (!original) return;
+        history[method] = function (...args) {
+          const result = original.apply(this, args);
+          notify();
+          return result;
+        };
+      };
+      wrap('pushState');
+      wrap('replaceState');
+      window.addEventListener('popstate', notify);
+      window.__ctUrlObserverInstalled = true;
+    }
+
+    window.addEventListener('ct:urlchange', () => {
+      this.handleUrlChange();
+    });
+  }
+
+  handleUrlChange() {
+    const newMode = this.detectPageMode();
+    if (newMode === this.pageMode) return;
+
+    this.pageMode = newMode;
+    this.capturedPostIds.clear();
+    console.log(`${this.platform}: Page mode changed: ${this.pageMode || 'feed'}`);
+
+    if (this.shouldAutoImport()) {
+      setTimeout(() => this.bulkCaptureVisiblePosts(), 800);
+      return;
+    }
+
+    this.cancelBulkCapture();
+  }
+
+  scheduleBulkCapture() {
+    if (!this.shouldAutoImport()) return;
+    if (this.bulkCaptureTimeout) {
+      clearTimeout(this.bulkCaptureTimeout);
+    }
+    this.bulkCaptureTimeout = setTimeout(() => {
+      this.bulkCaptureVisiblePosts();
+    }, 800);
+  }
+
   async captureInteraction(type, postElement) {
     try {
       const postId = postElement.dataset.postId || this.generatePostId(postElement);
@@ -174,6 +313,7 @@ class BasePlatformTracker {
       const viewDuration = this.timeTracker ? this.timeTracker.getDuration(postId) : 0;
       // Get logged-in user info
       const loggedInUser = this.extractLoggedInUser();
+      const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
 
       const interaction = {
         id: ContentExtractor.generatePostId(this.platform, content.url, content.text),
@@ -182,6 +322,7 @@ class BasePlatformTracker {
         timestamp: Date.now(),
         viewDuration: viewDuration,
         savedBy: loggedInUser,  // NEW: Track which user account saved this
+        contentKey: contentKey,
         content: content,
         metadata: metadata,
         categories: [],
@@ -206,6 +347,11 @@ class BasePlatformTracker {
             console.log(`${this.platform}: Successfully saved ${type} interaction`);
             saveSuccess = true;
             this.pendingSaves.delete(saveKey);
+
+            if (response.skippedDuplicate) {
+              console.log(`${this.platform}: Skipped duplicate ${type} interaction`);
+              return;
+            }
 
             // Show immediate success popup
             if (window.statusPopupManager) {
@@ -311,6 +457,141 @@ class BasePlatformTracker {
     return null;
   }
 
+  /**
+   * Detect the current page mode (feed, bookmarks, likes, saved, etc.)
+   * @returns {string|null} Page mode or null for regular feed
+   */
+  detectPageMode() {
+    // Default implementation - subclasses should override with platform-specific logic
+    return null;
+  }
+
+  /**
+   * Get the interaction type for the current page mode
+   * @returns {string} Interaction type (imported_bookmark, imported_like, imported_save)
+   */
+  getInteractionTypeForPageMode() {
+    const modeMap = {
+      'bookmarks': 'imported_bookmark',
+      'likes': 'imported_like',
+      'saved': 'imported_save',
+      'favorites': 'imported_save'
+    };
+    return modeMap[this.pageMode] || 'imported_save';
+  }
+
+  /**
+   * Bulk capture all visible posts on saved/liked pages
+   */
+  async bulkCaptureVisiblePosts() {
+    if (!this.shouldAutoImport()) return;
+    this.cancelBulkCapture();
+
+    console.log(`${this.platform}: Bulk capturing visible posts from ${this.pageMode} page`);
+
+    const selectors = this.getPostContainerSelectors();
+    if (!selectors || selectors.length === 0) return;
+
+    const posts = ContentExtractor.findAllWithFallback(document, selectors);
+    console.log(`${this.platform}: Found ${posts.length} posts to potentially capture`);
+
+    let capturedCount = 0;
+    const interactionType = this.getInteractionTypeForPageMode();
+
+    for (const post of posts) {
+      try {
+        if (!this.isElementVisible(post)) continue;
+        const postId = this.generatePostId(post);
+
+        // Skip if already captured
+        if (this.capturedPostIds.has(postId)) continue;
+        this.capturedPostIds.add(postId);
+
+        // Capture the post
+        const saved = await this.captureImportedInteraction(interactionType, post);
+        if (saved) {
+          capturedCount++;
+        }
+
+        // Small delay to avoid overwhelming the storage
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.error(`${this.platform}: Error capturing post:`, error);
+      }
+    }
+
+    if (capturedCount > 0 && !this.settings?.suppressImportNotifications) {
+      console.log(`${this.platform}: Captured ${capturedCount} posts from ${this.pageMode} page`);
+
+      // Show summary notification
+      if (window.statusPopupManager) {
+        window.statusPopupManager.show({
+          success: true,
+          saveSuccess: true,
+          interactionType: `${capturedCount} ${this.pageMode}`,
+          platform: this.platform,
+          categories: ['Imported'],
+          aiProcessed: false
+        });
+      }
+    }
+  }
+
+  /**
+   * Capture an imported interaction (from saved/liked page)
+   * @param {string} type - Interaction type
+   * @param {HTMLElement} postElement - Post element
+   */
+  async captureImportedInteraction(type, postElement) {
+    const content = this.extractContent(postElement);
+    const metadata = this.extractMetadata(postElement);
+    const loggedInUser = this.extractLoggedInUser();
+    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+
+    const interaction = {
+      id: ContentExtractor.generatePostId(this.platform, content.url, content.text),
+      platform: this.platform,
+      interactionType: type,
+      timestamp: Date.now(),
+      viewDuration: 0,
+      savedBy: loggedInUser,
+      contentKey: contentKey,
+      content: content,
+      metadata: metadata,
+      categories: [],
+      aiProcessed: false,
+      tags: [],
+      notes: '',
+      isFavorite: false,
+      importedFrom: this.pageMode // Track where it was imported from
+    };
+
+    // Send to service worker
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: MESSAGE_TYPES.SAVE_INTERACTION,
+        data: interaction
+      });
+
+      if (response && response.success && !response.skippedDuplicate) {
+        console.log(`${this.platform}: Imported ${type} interaction`);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error(`${this.platform}: Error saving imported interaction:`, error);
+      return false;
+    }
+  }
+
+  isElementVisible(element) {
+    if (!element) return false;
+    const rect = element.getBoundingClientRect();
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    return rect.bottom > 0 && rect.top < viewportHeight;
+  }
+
+
   isLikeButton(element) {
     throw new Error(`${this.platform}: isLikeButton() must be implemented`);
   }
@@ -343,6 +624,10 @@ class BasePlatformTracker {
     if (this.observer) {
       this.observer.disconnect();
       this.observer = null;
+    }
+    if (this.bulkCaptureTimeout) {
+      clearTimeout(this.bulkCaptureTimeout);
+      this.bulkCaptureTimeout = null;
     }
     this.trackedPosts.clear();
     this.pendingSaves.clear();
