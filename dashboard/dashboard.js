@@ -18,16 +18,24 @@ class DashboardManager {
       platform: 'all',
       category: 'all',
       search: '',
-      sort: 'date-desc'
+      sort: 'date-desc',
+      includeCategories: [],
+      excludeCategories: []
     };
     this.viewMode = 'grid';
     this.allItems = [];
     this.itemsById = new Map();
     this.userCategories = [];
     this.userAccounts = {};
+    this.availableCategories = [];
+    this.aiSeedDefaults = null;
+    this.aiSeedSourceCategory = null;
     this.aiTokenCache = new Map();
     this.aiSuggestedItems = [];
     this.aiSuggestedScoreMap = new Map();
+    this.aiReorgSelection = new Set();
+    this.aiReorgSuggestions = [];
+    this.aiReorgNotes = '';
     this.aiFilters = {
       seedQuery: '',
       suggestedQuery: '',
@@ -82,6 +90,7 @@ class DashboardManager {
         this.aiSuggestedItems = [];
         this.aiSuggestedScoreMap = new Map();
         this.loadCategoriesFromContent();
+        this.updateCategorySuggestionBar();
         this.filterAndDisplayContent();
       } else {
         console.error('Failed to load content:', response?.error);
@@ -104,9 +113,12 @@ class DashboardManager {
 
     // Merge with user categories and sort
     const uniqueCats = [...new Set([...contentCategories, ...this.userCategories])].sort();
+    this.availableCategories = uniqueCats;
 
     // Render
     this.contentRenderer.renderCategories(uniqueCats, this.currentFilters.category);
+    this.updateCategoryFilterOptions(uniqueCats);
+    this.updateReorgCategoryList();
   }
 
   filterAndDisplayContent() {
@@ -143,6 +155,143 @@ class DashboardManager {
       });
     }
 
+    this.filterAndDisplayContent();
+    if (type === 'category') {
+      this.updateCategorySuggestionBar();
+    }
+  }
+
+  updateCategorySuggestionBar() {
+    const bar = document.getElementById('category-ai-suggestion');
+    const nameEl = document.getElementById('category-ai-name');
+    if (!bar || !nameEl) return;
+
+    const activeCategory = this.currentFilters.category;
+    if (!activeCategory || activeCategory === 'all') {
+      bar.classList.add('hidden');
+      nameEl.textContent = '';
+      return;
+    }
+
+    nameEl.textContent = activeCategory;
+    bar.classList.remove('hidden');
+  }
+
+  updateCategoryFilterOptions(categories) {
+    const includeList = document.getElementById('include-category-list');
+    const excludeList = document.getElementById('exclude-category-list');
+    if (!includeList || !excludeList) return;
+
+    const validCategories = new Set(categories || []);
+    this.currentFilters.includeCategories = (this.currentFilters.includeCategories || [])
+      .filter(cat => validCategories.has(cat));
+    this.currentFilters.excludeCategories = (this.currentFilters.excludeCategories || [])
+      .filter(cat => validCategories.has(cat));
+
+    includeList.innerHTML = '';
+    excludeList.innerHTML = '';
+
+    if (!categories || categories.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'filter-empty';
+      empty.textContent = 'No categories yet.';
+      includeList.appendChild(empty.cloneNode(true));
+      excludeList.appendChild(empty);
+      return;
+    }
+
+    const includeSet = new Set(this.currentFilters.includeCategories || []);
+    const excludeSet = new Set(this.currentFilters.excludeCategories || []);
+
+    categories.forEach(category => {
+      const includeItem = this.buildCategoryFilterItem(category, 'include', includeSet.has(category));
+      const excludeItem = this.buildCategoryFilterItem(category, 'exclude', excludeSet.has(category));
+      includeList.appendChild(includeItem);
+      excludeList.appendChild(excludeItem);
+    });
+
+    this.updateCategoryFilterCount();
+  }
+
+  updateReorgCategoryList() {
+    const modal = document.getElementById('ai-reorg-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    this.renderReorgCategoryList();
+  }
+
+  buildCategoryFilterItem(category, mode, checked) {
+    const label = document.createElement('label');
+    label.className = 'filter-category-item';
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'category-filter-checkbox';
+    checkbox.dataset.mode = mode;
+    checkbox.dataset.category = category;
+    checkbox.checked = checked;
+
+    const name = document.createElement('span');
+    name.className = 'filter-category-name';
+    name.textContent = category;
+
+    label.appendChild(checkbox);
+    label.appendChild(name);
+    return label;
+  }
+
+  handleCategoryFilterToggle(mode, category, checked) {
+    const include = this.currentFilters.includeCategories;
+    const exclude = this.currentFilters.excludeCategories;
+
+    if (mode === 'include') {
+      if (checked && !include.includes(category)) include.push(category);
+      if (!checked) this.currentFilters.includeCategories = include.filter(cat => cat !== category);
+
+      if (checked && exclude.includes(category)) {
+        this.currentFilters.excludeCategories = exclude.filter(cat => cat !== category);
+        const excludeBox = document.querySelector(
+          `.category-filter-checkbox[data-mode="exclude"][data-category="${CSS.escape(category)}"]`
+        );
+        if (excludeBox) excludeBox.checked = false;
+      }
+    } else {
+      if (checked && !exclude.includes(category)) exclude.push(category);
+      if (!checked) this.currentFilters.excludeCategories = exclude.filter(cat => cat !== category);
+
+      if (checked && include.includes(category)) {
+        this.currentFilters.includeCategories = include.filter(cat => cat !== category);
+        const includeBox = document.querySelector(
+          `.category-filter-checkbox[data-mode="include"][data-category="${CSS.escape(category)}"]`
+        );
+        if (includeBox) includeBox.checked = false;
+      }
+    }
+
+    this.updateCategoryFilterCount();
+    this.filterAndDisplayContent();
+  }
+
+  updateCategoryFilterCount() {
+    const count = (this.currentFilters.includeCategories?.length || 0)
+      + (this.currentFilters.excludeCategories?.length || 0);
+    const countEl = document.getElementById('category-filter-count');
+    if (!countEl) return;
+    if (count === 0) {
+      countEl.textContent = '0';
+      countEl.classList.add('hidden');
+      return;
+    }
+    countEl.textContent = String(count);
+    countEl.classList.remove('hidden');
+  }
+
+  clearCategoryFilters() {
+    this.currentFilters.includeCategories = [];
+    this.currentFilters.excludeCategories = [];
+    document.querySelectorAll('.category-filter-checkbox').forEach(box => {
+      box.checked = false;
+    });
+    this.updateCategoryFilterCount();
     this.filterAndDisplayContent();
   }
 
@@ -289,6 +438,8 @@ class DashboardManager {
     this.aiFilters.suggestedQuery = '';
     this.aiFilters.mode = 'text';
     this.aiFilters.sensitivity = 50;
+    this.aiSeedDefaults = null;
+    this.aiSeedSourceCategory = null;
 
     const seedFilter = document.getElementById('ai-seed-filter');
     const suggestedFilter = document.getElementById('ai-suggested-filter');
@@ -311,18 +462,257 @@ class DashboardManager {
     modal.classList.remove('hidden');
   }
 
+  openAICategoryModalForCategory(categoryName) {
+    if (!categoryName || categoryName === 'all') return;
+    this.openAICategoryModal();
+
+    const categoryInput = document.getElementById('ai-category-name');
+    if (categoryInput) categoryInput.value = categoryName;
+
+    const seedItems = this.allItems
+      .filter(item => item.categories && item.categories.includes(categoryName))
+      .sort((a, b) => b.timestamp - a.timestamp);
+
+    this.aiSeedSourceCategory = categoryName;
+    this.aiSeedDefaults = new Set(seedItems.slice(0, 6).map(item => item.id));
+    this.renderAiSeedList();
+
+    if (seedItems.length > 0) {
+      this.findSimilarItems();
+    } else {
+      const status = document.getElementById('ai-similar-status');
+      if (status) status.textContent = 'No items in this category yet. Add a few examples first.';
+    }
+  }
+
   closeAICategoryModal() {
     document.getElementById('ai-category-modal')?.classList.add('hidden');
   }
 
+  openAIReorgModal() {
+    const modal = document.getElementById('ai-reorg-modal');
+    if (!modal) return;
+
+    this.aiReorgSelection = new Set();
+    this.aiReorgSuggestions = [];
+    this.aiReorgNotes = '';
+
+    const actionSelect = document.getElementById('ai-reorg-action');
+    if (actionSelect) actionSelect.value = 'merge';
+
+    const searchInput = document.getElementById('ai-reorg-search');
+    if (searchInput) searchInput.value = '';
+
+    const goalInput = document.getElementById('ai-reorg-goal');
+    if (goalInput) goalInput.value = '';
+
+    this.renderReorgCategoryList();
+    this.renderReorgSuggestions();
+    this.updateReorgApplyState();
+
+    modal.classList.remove('hidden');
+  }
+
+  closeAIReorgModal() {
+    document.getElementById('ai-reorg-modal')?.classList.add('hidden');
+  }
+
+  renderReorgCategoryList() {
+    const container = document.getElementById('ai-reorg-category-list');
+    if (!container) return;
+
+    container.innerHTML = '';
+    const query = (document.getElementById('ai-reorg-search')?.value || '').trim().toLowerCase();
+    const categories = (this.availableCategories || [])
+      .filter(cat => cat && cat !== 'Uncategorized')
+      .filter(cat => !query || cat.toLowerCase().includes(query));
+
+    if (categories.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'ai-reorg-empty';
+      empty.textContent = 'No categories found.';
+      container.appendChild(empty);
+      return;
+    }
+
+    categories.forEach(category => {
+      const row = document.createElement('label');
+      row.className = 'ai-reorg-item';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.category = category;
+      checkbox.checked = this.aiReorgSelection.has(category);
+
+      const text = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'ai-reorg-item-title';
+      title.textContent = category;
+      text.appendChild(title);
+
+      row.appendChild(checkbox);
+      row.appendChild(text);
+      container.appendChild(row);
+    });
+  }
+
+  updateReorgSelection(category, checked) {
+    if (!category) return;
+    if (checked) {
+      this.aiReorgSelection.add(category);
+    } else {
+      this.aiReorgSelection.delete(category);
+    }
+  }
+
+  renderReorgSuggestions() {
+    const container = document.getElementById('ai-reorg-results');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!this.aiReorgSuggestions || this.aiReorgSuggestions.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'ai-reorg-empty';
+      empty.textContent = 'No suggestions yet. Select categories and click "Get suggestions".';
+      container.appendChild(empty);
+      return;
+    }
+
+    this.aiReorgSuggestions.forEach((suggestion, index) => {
+      const row = document.createElement('label');
+      row.className = 'ai-reorg-item';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.index = String(index);
+      checkbox.checked = suggestion.apply !== false;
+
+      const text = document.createElement('div');
+      const title = document.createElement('div');
+      title.className = 'ai-reorg-item-title';
+
+      const fromLabel = Array.isArray(suggestion.from)
+        ? suggestion.from.join(', ')
+        : suggestion.from;
+      const toLabel = Array.isArray(suggestion.to)
+        ? suggestion.to.join(', ')
+        : suggestion.to;
+
+      title.textContent = `${fromLabel || 'Unknown'} → ${toLabel || 'Unknown'}`;
+      text.appendChild(title);
+
+      if (suggestion.reason) {
+        const sub = document.createElement('div');
+        sub.className = 'ai-reorg-item-sub';
+        sub.textContent = suggestion.reason;
+        text.appendChild(sub);
+      }
+
+      row.appendChild(checkbox);
+      row.appendChild(text);
+      container.appendChild(row);
+    });
+
+    if (this.aiReorgNotes) {
+      const note = document.createElement('div');
+      note.className = 'ai-reorg-note';
+      note.textContent = this.aiReorgNotes;
+      container.appendChild(note);
+    }
+  }
+
+  updateReorgApplyState() {
+    const applyBtn = document.getElementById('ai-reorg-apply');
+    if (!applyBtn) return;
+    const canApply = this.aiReorgSuggestions.some(suggestion =>
+      typeof suggestion.from === 'string' && typeof suggestion.to === 'string' && suggestion.from && suggestion.to
+    );
+    applyBtn.disabled = !canApply;
+  }
+
+  async requestReorgSuggestions() {
+    const status = document.getElementById('ai-reorg-status');
+    const selected = Array.from(this.aiReorgSelection);
+    const action = document.getElementById('ai-reorg-action')?.value || 'organize';
+    const goal = document.getElementById('ai-reorg-goal')?.value.trim() || '';
+
+    if (selected.length === 0) {
+      alert('Select at least one category.');
+      return;
+    }
+
+    if (action === 'merge' && selected.length < 2) {
+      alert('Select at least two categories to merge.');
+      return;
+    }
+
+    if (status) status.textContent = 'Generating suggestions...';
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'SUGGEST_CATEGORY_REORG',
+        payload: {
+          action,
+          categories: selected,
+          goal
+        }
+      });
+
+      if (!response || !response.success) {
+        throw new Error(response?.error || 'Failed to generate suggestions');
+      }
+
+      const suggestions = response.data?.suggestions || [];
+      this.aiReorgNotes = response.data?.notes || '';
+      this.aiReorgSuggestions = suggestions.map(suggestion => ({
+        ...suggestion,
+        apply: true
+      }));
+      this.renderReorgSuggestions();
+      this.updateReorgApplyState();
+
+      if (status) {
+        status.textContent = suggestions.length
+          ? `Suggested ${suggestions.length} changes.`
+          : 'No changes suggested for these categories.';
+      }
+    } catch (error) {
+      console.error('Error generating category suggestions:', error);
+      if (status) status.textContent = 'Failed to generate suggestions.';
+      alert('Failed to generate suggestions: ' + error.message);
+    }
+  }
+
+  async applyReorgSuggestions() {
+    const selections = [...document.querySelectorAll('#ai-reorg-results input[type=\"checkbox\"][data-index]')];
+    const mappings = selections
+      .filter(input => input.checked)
+      .map(input => this.aiReorgSuggestions[Number(input.dataset.index)])
+      .filter(suggestion => typeof suggestion?.from === 'string' && typeof suggestion?.to === 'string');
+
+    if (mappings.length === 0) {
+      alert('No applicable changes selected.');
+      return;
+    }
+
+    await this.applyCategoryReorgMappings(mappings);
+    this.closeAIReorgModal();
+  }
+
   renderAiSeedList() {
-    const sorted = [...this.allItems].sort((a, b) => b.timestamp - a.timestamp);
+    const sourceItems = this.aiSeedSourceCategory
+      ? this.allItems.filter(item =>
+        item.categories && item.categories.includes(this.aiSeedSourceCategory))
+      : this.allItems;
+    const sorted = [...sourceItems].sort((a, b) => b.timestamp - a.timestamp);
     this.renderAiItemList(sorted, 'ai-seed-list', {
       defaultChecked: false,
+      defaultCheckedIds: this.aiSeedDefaults,
       filterText: this.aiFilters.seedQuery,
       filterMode: this.aiFilters.mode,
       checkedIds: this.getCheckedIdSet('ai-seed-list')
     });
+    this.aiSeedDefaults = null;
   }
 
   renderAiSuggestedList(items, scoreMap = null) {
@@ -373,7 +763,10 @@ class DashboardManager {
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.dataset.id = item.id;
+      const hasCheckedIds = options.checkedIds && options.checkedIds.size > 0;
       if (options.checkedIds && options.checkedIds.has(item.id)) {
+        checkbox.checked = true;
+      } else if (!hasCheckedIds && options.defaultCheckedIds && options.defaultCheckedIds.has(item.id)) {
         checkbox.checked = true;
       } else {
         checkbox.checked = options.defaultChecked === true;
@@ -550,7 +943,10 @@ class DashboardManager {
 
     scored.sort((a, b) => b.score - a.score);
     const config = this.getSimilarityConfig();
-    const suggestions = scored.filter(entry => entry.score >= config.threshold).slice(0, config.maxSuggestions);
+    const suggestions = scored
+      .filter(entry => entry.score >= config.threshold)
+      .filter(entry => !(entry.item.categories || []).includes(categoryName))
+      .slice(0, config.maxSuggestions);
     const scoreMap = new Map(suggestions.map(entry => [entry.item.id, entry.score]));
     this.aiSuggestedItems = suggestions.map(entry => entry.item);
     this.aiSuggestedScoreMap = scoreMap;
@@ -596,6 +992,85 @@ class DashboardManager {
     if (!this.userCategories.includes(name)) {
       await this.addCustomCategory(name);
     }
+  }
+
+  async applyCategoryReorgMappings(mappings) {
+    const renameMap = new Map();
+    mappings.forEach(mapping => {
+      if (!mapping || typeof mapping.from !== 'string' || typeof mapping.to !== 'string') return;
+      if (!mapping.from || !mapping.to || mapping.from === mapping.to) return;
+      renameMap.set(mapping.from, mapping.to);
+    });
+
+    if (renameMap.size === 0) return;
+
+    const updates = [];
+    this.allItems.forEach(item => {
+      const current = item.categories || [];
+      if (current.length === 0) return;
+      let changed = false;
+      const updated = current.map(cat => {
+        if (renameMap.has(cat)) {
+          changed = true;
+          return renameMap.get(cat);
+        }
+        return cat;
+      });
+
+      if (!changed) return;
+      const unique = [...new Set(updated.filter(Boolean))];
+      updates.push({ id: item.id, categories: unique });
+    });
+
+    if (updates.length === 0) return;
+
+    // Optimistic update
+    updates.forEach(update => {
+      const itemIndex = this.allItems.findIndex(i => i.id === update.id);
+      if (itemIndex !== -1) {
+        this.allItems[itemIndex].categories = update.categories;
+        this.itemsById.set(update.id, this.allItems[itemIndex]);
+      }
+    });
+
+    if (renameMap.has(this.currentFilters.category)) {
+      this.currentFilters.category = renameMap.get(this.currentFilters.category);
+      this.updateCategorySuggestionBar();
+    }
+
+    this.filterAndDisplayContent();
+    this.loadCategoriesFromContent();
+
+    const results = await Promise.all(
+      updates.map(update => chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: update.id,
+        updates: { categories: update.categories }
+      }))
+    );
+
+    const failures = results.filter(result => !result?.success);
+    if (failures.length) {
+      console.error('Some category reorg updates failed:', failures);
+      alert(`${failures.length} items failed to update. Reloading to sync.`);
+      this.loadContent();
+    }
+
+    const updatedUserCategories = new Set(this.userCategories);
+    renameMap.forEach((to, from) => {
+      updatedUserCategories.delete(from);
+      updatedUserCategories.add(to);
+    });
+
+    const updatedList = [...updatedUserCategories];
+    await chrome.runtime.sendMessage({
+      type: 'UPDATE_USER_CATEGORIES',
+      categories: updatedList
+    });
+
+    this.userCategories = updatedList;
+    this.modalsManager.renderCustomCategories(this.userCategories);
+    this.loadCategoriesFromContent();
   }
 
   async applyCategoryToItems(category, itemIds) {
@@ -744,6 +1219,66 @@ class DashboardManager {
       this.setFilter('search', e.target.value);
     });
 
+    const filterBtn = document.getElementById('category-filter-btn');
+    const filterPanel = document.getElementById('category-filter-panel');
+
+    filterBtn?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      if (!filterPanel) return;
+      filterPanel.classList.toggle('hidden');
+      const expanded = !filterPanel.classList.contains('hidden');
+      filterBtn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    });
+
+    filterPanel?.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+
+    filterPanel?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!target || !target.classList.contains('category-filter-checkbox')) return;
+      const mode = target.dataset.mode;
+      const category = target.dataset.category;
+      if (!mode || !category) return;
+      this.handleCategoryFilterToggle(mode, category, target.checked);
+    });
+
+    document.getElementById('clear-category-filters')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      this.clearCategoryFilters();
+    });
+
+    document.getElementById('category-ai-btn')?.addEventListener('click', () => {
+      this.openAICategoryModalForCategory(this.currentFilters.category);
+    });
+
+    document.getElementById('ai-reorg-search')?.addEventListener('input', () => {
+      this.renderReorgCategoryList();
+    });
+
+    document.getElementById('ai-reorg-category-list')?.addEventListener('change', (event) => {
+      const target = event.target;
+      if (!target || target.type !== 'checkbox') return;
+      const category = target.dataset.category;
+      this.updateReorgSelection(category, target.checked);
+    });
+
+    document.getElementById('ai-reorg-generate')?.addEventListener('click', () => {
+      this.requestReorgSuggestions();
+    });
+
+    document.getElementById('ai-reorg-apply')?.addEventListener('click', () => {
+      this.applyReorgSuggestions();
+    });
+
+    document.getElementById('ai-reorg-cancel')?.addEventListener('click', () => {
+      this.closeAIReorgModal();
+    });
+
+    document.getElementById('close-ai-reorg')?.addEventListener('click', () => {
+      this.closeAIReorgModal();
+    });
+
     // Platform filters
     document.querySelectorAll('.platform-list li').forEach(li => {
       li.addEventListener('click', () => {
@@ -789,9 +1324,24 @@ class DashboardManager {
       this.openAICategoryModal();
     });
 
+    document.getElementById('ai-reorg-categories')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      aiFab?.classList.remove('open');
+      this.openAIReorgModal();
+    });
+
     document.addEventListener('click', (event) => {
       if (aiFab && !aiFab.contains(event.target)) {
         aiFab.classList.remove('open');
+      }
+    });
+
+    document.addEventListener('click', (event) => {
+      if (!filterPanel || !filterBtn) return;
+      if (filterPanel.classList.contains('hidden')) return;
+      if (!filterPanel.contains(event.target) && !filterBtn.contains(event.target)) {
+        filterPanel.classList.add('hidden');
+        filterBtn.setAttribute('aria-expanded', 'false');
       }
     });
 
@@ -814,6 +1364,12 @@ class DashboardManager {
     document.getElementById('ai-category-modal')?.addEventListener('click', (event) => {
       if (event.target?.id === 'ai-category-modal') {
         this.closeAICategoryModal();
+      }
+    });
+
+    document.getElementById('ai-reorg-modal')?.addEventListener('click', (event) => {
+      if (event.target?.id === 'ai-reorg-modal') {
+        this.closeAIReorgModal();
       }
     });
 

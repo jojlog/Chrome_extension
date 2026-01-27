@@ -110,6 +110,9 @@ async function handleMessage(message, sender) {
     case 'UPDATE_USER_CATEGORIES':
       return await handleUpdateUserCategories(message.categories);
 
+    case 'SUGGEST_CATEGORY_REORG':
+      return await handleSuggestCategoryReorg(message.payload);
+
     // Account Management
     case 'GET_USER_ACCOUNTS':
       return await handleGetUserAccounts();
@@ -135,6 +138,23 @@ async function handleMessage(message, sender) {
     default:
       console.warn('Unknown message type:', message.type);
       return { success: false, error: 'Unknown message type' };
+  }
+}
+
+async function handleSuggestCategoryReorg(payload = {}) {
+  try {
+    await aiCategorizer.init();
+    const categoriesWithUsage = await storageManager.getCategoriesWithUsage();
+    const result = await aiCategorizer.suggestCategoryReorg({
+      action: payload.action,
+      categories: payload.categories,
+      categoriesWithUsage,
+      goal: payload.goal
+    });
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error suggesting category reorg:', error);
+    return { success: false, error: error.message };
   }
 }
 

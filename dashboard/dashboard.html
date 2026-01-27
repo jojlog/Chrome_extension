@@ -30,6 +30,8 @@
 
         <div class="nav-section">
           <h3>Categories</h3>
+          <p class="category-hint">Folder Hierarchy: You can now use hierarchy in categories (e.g., Tech/AI, Tech/Web)
+            and they will render as a nested tree in the sidebar with expand/collapse support.</p>
           <ul id="category-list" class="category-list">
             <li data-category="all" class="active">All Categories</li>
           </ul>
@@ -47,6 +49,25 @@
       <header class="dashboard-header">
         <div class="search-bar">
           <input type="text" id="search-input" placeholder="Search saved content...">
+          <button id="category-filter-btn" class="btn-secondary search-filter-btn" type="button"
+            aria-expanded="false">
+            <span class="search-filter-label">Filter</span>
+            <span id="category-filter-count" class="search-filter-count hidden">0</span>
+          </button>
+          <div id="category-filter-panel" class="search-filter-panel hidden" role="dialog"
+            aria-label="Category filters">
+            <div class="filter-section">
+              <div class="filter-section-title">Include categories</div>
+              <div id="include-category-list" class="filter-category-list"></div>
+            </div>
+            <div class="filter-section">
+              <div class="filter-section-title">Exclude categories</div>
+              <div id="exclude-category-list" class="filter-category-list"></div>
+            </div>
+            <div class="filter-actions">
+              <button id="clear-category-filters" class="btn-secondary" type="button">Clear</button>
+            </div>
+          </div>
         </div>
 
         <div class="header-actions">
@@ -61,6 +82,16 @@
           <button id="view-toggle" class="btn-toggle">Grid View</button>
         </div>
       </header>
+
+      <div id="category-ai-suggestion" class="category-ai-suggestion hidden">
+        <div class="category-ai-text">
+          <div class="category-ai-title">AI suggestions</div>
+          <div class="category-ai-sub">
+            Find more content that fits <span id="category-ai-name" class="category-ai-name"></span>.
+          </div>
+        </div>
+        <button id="category-ai-btn" class="btn-secondary" type="button">Find similar</button>
+      </div>
 
       <div id="content-area" class="content-area">
         <div class="loading">Loading your saved content...</div>
@@ -236,6 +267,54 @@
           </div>
         </div>
       </div>
+
+      <!-- AI Category Organizer Modal -->
+      <div id="ai-reorg-modal" class="modal hidden">
+        <div class="modal-content modal-content-wide">
+          <div class="modal-header">
+            <h2>AI Category Organizer</h2>
+            <button id="close-ai-reorg" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>Select categories to reorganize</label>
+              <input type="text" id="ai-reorg-search" class="ai-filter-input" placeholder="Filter categories...">
+              <div id="ai-reorg-category-list" class="ai-reorg-list"></div>
+              <small>Select categories you want to merge, split, or reorder.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-reorg-action">Action</label>
+              <select id="ai-reorg-action" class="ai-filter-select">
+                <option value="merge">Merge</option>
+                <option value="split">Split</option>
+                <option value="reorder">Reorder / move</option>
+                <option value="organize">Reorganize hierarchy</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-reorg-goal">Notes (optional)</label>
+              <input type="text" id="ai-reorg-goal" class="ai-filter-input"
+                placeholder="e.g. group by platform, keep AI at top-level">
+            </div>
+
+            <div class="ai-modal-actions">
+              <button id="ai-reorg-generate" class="btn-primary">Get suggestions</button>
+              <span id="ai-reorg-status" class="ai-hint"></span>
+            </div>
+
+            <div class="form-group">
+              <label>Suggestions</label>
+              <div id="ai-reorg-results" class="ai-reorg-results"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="ai-reorg-apply" class="btn-primary" disabled>Apply changes</button>
+            <button id="ai-reorg-cancel" class="btn-secondary">Close</button>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 
@@ -249,6 +328,7 @@
       <div class="ai-fab-menu-header">AI Assist</div>
       <button id="ai-categorize-uncategorized" class="ai-menu-item">Categorize uncategorized</button>
       <button id="ai-auto-categorize" class="ai-menu-item">Create category from examples</button>
+      <button id="ai-reorg-categories" class="ai-menu-item">Reorganize categories</button>
     </div>
   </div>
 

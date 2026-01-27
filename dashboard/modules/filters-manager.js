@@ -5,7 +5,7 @@ export class FiltersManager {
     /**
      * Filter content based on criteria
      * @param {Array} items - All items
-     * @param {Object} filters - Filter criteria {platform, category, search}
+     * @param {Object} filters - Filter criteria {platform, category, search, includeCategories, excludeCategories}
      * @returns {Array} Filtered items
      */
     filterContent(items, filters) {
@@ -21,6 +21,22 @@ export class FiltersManager {
             filtered = filtered.filter(item =>
                 item.categories && item.categories.includes(filters.category)
             );
+        }
+
+        // Include Category Filters (any match)
+        if (filters.includeCategories && filters.includeCategories.length > 0) {
+            filtered = filtered.filter(item => {
+                if (!item.categories || item.categories.length === 0) return false;
+                return filters.includeCategories.some(cat => item.categories.includes(cat));
+            });
+        }
+
+        // Exclude Category Filters (no match)
+        if (filters.excludeCategories && filters.excludeCategories.length > 0) {
+            filtered = filtered.filter(item => {
+                if (!item.categories || item.categories.length === 0) return true;
+                return !filters.excludeCategories.some(cat => item.categories.includes(cat));
+            });
         }
 
         // Filter by Search
