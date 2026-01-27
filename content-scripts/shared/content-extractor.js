@@ -16,15 +16,19 @@ class ContentExtractor {
    * Extract image URLs from element
    * @param {HTMLElement} element - Element to search for images
    * @param {string} selector - CSS selector for images (default: 'img')
+   * @param {Function|null} filterFn - Optional filter function (imgEl) => boolean
    * @returns {Array<string>} Array of image URLs
    */
-  static extractImageUrls(element, selector = 'img') {
+  static extractImageUrls(element, selector = 'img', filterFn = null) {
     if (!element) return [];
 
     const images = element.querySelectorAll(selector);
     const urls = [];
 
     images.forEach(img => {
+      if (filterFn && !filterFn(img)) {
+        return;
+      }
       // Try different image URL sources
       const url = img.src || img.dataset.src || img.currentSrc;
       if (url && url.startsWith('http')) {

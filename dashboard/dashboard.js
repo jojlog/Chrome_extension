@@ -1117,6 +1117,57 @@ class DashboardManager {
     }
   }
 
+  loadImagePreview(imgEl, url) {
+    if (!imgEl || !url) return;
+    if (this.shouldAvoidRemoteImage(url)) {
+      this.requestImageDataUrl(url).then((dataUrl) => {
+        if (dataUrl) {
+          imgEl.src = dataUrl;
+        } else {
+          imgEl.classList.add('image-load-failed');
+        }
+      });
+      return;
+    }
+    imgEl.referrerPolicy = 'no-referrer';
+    imgEl.src = url;
+
+    const onError = async () => {
+      if (imgEl.dataset.proxyTried === '1') return;
+      imgEl.dataset.proxyTried = '1';
+      const dataUrl = await this.requestImageDataUrl(url);
+      if (!dataUrl) {
+        imgEl.classList.add('image-load-failed');
+        return;
+      }
+      imgEl.src = dataUrl;
+    };
+
+    imgEl.addEventListener('error', onError, { once: true });
+  }
+
+  async requestImageDataUrl(url) {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'FETCH_IMAGE_DATA_URL',
+        url
+      });
+      return response?.success ? response.dataUrl : null;
+    } catch (error) {
+      console.warn('Image fetch failed:', error);
+      return null;
+    }
+  }
+
+  shouldAvoidRemoteImage(url) {
+    try {
+      const host = new URL(url).hostname;
+      return host.includes('instagram') || host.includes('cdninstagram') || host.includes('fbcdn.net');
+    } catch (error) {
+      return false;
+    }
+  }
+
   // --- Modals Integration ---
 
   async showSettingsModal() {

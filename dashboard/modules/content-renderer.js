@@ -271,14 +271,35 @@ export class ContentRenderer {
         body.appendChild(text);
 
         // Media preview if available
-        if (viewMode === 'grid' && item.content.imageUrls && item.content.imageUrls.length > 0) {
+        if (viewMode === 'grid' && (item.content.previewDataUrl || (item.content.imageUrls && item.content.imageUrls.length > 0))) {
             const imageContainer = document.createElement('div');
             imageContainer.className = 'media-preview';
             const img = document.createElement('img');
-            img.src = item.content.imageUrls[0];
             img.loading = 'lazy';
+            img.decoding = 'async';
+            img.alt = 'Saved content preview';
             imageContainer.appendChild(img);
             body.appendChild(imageContainer);
+            if (item.content.previewDataUrl) {
+                img.src = item.content.previewDataUrl;
+            } else {
+                if (item.platform === 'instagram') {
+                    const loadBtn = document.createElement('button');
+                    loadBtn.className = 'media-preview-btn';
+                    loadBtn.type = 'button';
+                    loadBtn.textContent = 'Load preview';
+                    loadBtn.addEventListener('click', (event) => {
+                        event.stopPropagation();
+                        loadBtn.disabled = true;
+                        loadBtn.textContent = 'Loading...';
+                        this.dashboardManager.loadImagePreview(img, item.content.imageUrls[0]);
+                        loadBtn.remove();
+                    });
+                    imageContainer.appendChild(loadBtn);
+                } else {
+                    this.dashboardManager.loadImagePreview(img, item.content.imageUrls[0]);
+                }
+            }
         }
 
         // Footer: Author + Saved By + Categories

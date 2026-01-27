@@ -259,10 +259,19 @@ class InstagramTracker extends BasePlatformTracker {
     const textElement = ContentExtractor.findWithFallback(postElement, InstagramSelectors.POST_TEXT);
     const text = textElement ? ContentExtractor.extractText(textElement) : '';
 
-    // Extract images
+    // Extract images (skip profile/avatar images)
     const imageUrls = ContentExtractor.extractImageUrls(
       postElement,
-      InstagramSelectors.POST_IMAGES.join(',')
+      InstagramSelectors.POST_IMAGES.join(','),
+      (img) => {
+        const alt = (img.getAttribute('alt') || '').toLowerCase();
+        const ariaLabel = (img.getAttribute('aria-label') || '').toLowerCase();
+        if (alt.includes('profile') || alt.includes('avatar')) return false;
+        if (ariaLabel.includes('profile') || ariaLabel.includes('avatar')) return false;
+        if (img.closest('header')) return false;
+        if (img.closest('a')?.getAttribute('href')?.includes('/accounts/')) return false;
+        return true;
+      }
     );
 
     // Extract video
@@ -292,7 +301,15 @@ class InstagramTracker extends BasePlatformTracker {
 
     const imageUrls = ContentExtractor.extractImageUrls(
       postElement,
-      InstagramSelectors.SAVED_GRID_IMAGE.join(',')
+      InstagramSelectors.SAVED_GRID_IMAGE.join(','),
+      (img) => {
+        const alt = (img.getAttribute('alt') || '').toLowerCase();
+        const ariaLabel = (img.getAttribute('aria-label') || '').toLowerCase();
+        if (alt.includes('profile') || alt.includes('avatar')) return false;
+        if (ariaLabel.includes('profile') || ariaLabel.includes('avatar')) return false;
+        if (img.closest('header')) return false;
+        return true;
+      }
     );
 
     return {

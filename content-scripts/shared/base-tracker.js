@@ -18,6 +18,7 @@ const MESSAGE_TYPES = {
   RESUME_AUTO_SCROLL_IMPORT: 'RESUME_AUTO_SCROLL_IMPORT',
   STOP_AUTO_SCROLL_IMPORT: 'STOP_AUTO_SCROLL_IMPORT',
   GET_INTERACTION_BY_KEY: 'GET_INTERACTION_BY_KEY',
+  CAPTURE_POST_PREVIEW: 'CAPTURE_POST_PREVIEW',
   PING: 'PING',
   GET_CURRENT_TAB_ID: 'GET_CURRENT_TAB_ID'
 };
@@ -785,6 +786,8 @@ class BasePlatformTracker {
               return;
             }
 
+            this.requestPreviewCapture(postElement, interaction.id);
+
             // Show immediate success popup
             if (window.statusPopupManager) {
               window.statusPopupManager.show({
@@ -837,6 +840,27 @@ class BasePlatformTracker {
           aiFailureReason: errorMessage
         });
       }
+    }
+  }
+
+  requestPreviewCapture(postElement, interactionId) {
+    try {
+      if (!postElement || !interactionId) return;
+      const rect = postElement.getBoundingClientRect();
+      if (!rect || rect.width < 10 || rect.height < 10) return;
+      chrome.runtime.sendMessage({
+        type: MESSAGE_TYPES.CAPTURE_POST_PREVIEW,
+        interactionId,
+        rect: {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        },
+        dpr: window.devicePixelRatio || 1
+      });
+    } catch (error) {
+      console.warn(`${this.platform}: Preview capture failed`, error);
     }
   }
 

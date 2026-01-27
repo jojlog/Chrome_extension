@@ -15,6 +15,8 @@
 
   "host_permissions": [
     "https://www.instagram.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*",
     "https://twitter.com/*",
     "https://x.com/*",
     "https://www.linkedin.com/*",

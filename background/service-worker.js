@@ -113,6 +113,12 @@ async function handleMessage(message, sender) {
     case 'SUGGEST_CATEGORY_REORG':
       return await handleSuggestCategoryReorg(message.payload);
 
+    case 'FETCH_IMAGE_DATA_URL':
+      return await handleFetchImageDataUrl(message.url);
+
+    case 'CAPTURE_POST_PREVIEW':
+      return await handleCapturePostPreview(message, sender);
+
     // Account Management
     case 'GET_USER_ACCOUNTS':
       return await handleGetUserAccounts();
@@ -158,6 +164,108 @@ async function handleSuggestCategoryReorg(payload = {}) {
   }
 }
 
+async function handleFetchImageDataUrl(url) {
+  try {
+    if (!url) {
+      return { success: false, error: 'Missing URL' };
+    }
+    const dataUrl = await fetchImageAsDataUrl(url);
+    return { success: true, dataUrl };
+  } catch (error) {
+    console.warn('Failed to fetch image data URL:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleCapturePostPreview(message, sender) {
+  try {
+    const hasCapturePermission = await chrome.permissions.contains({
+      permissions: ['activeTab']
+    });
+    const hasAllUrls = await chrome.permissions.contains({
+      origins: ['<all_urls>']
+    });
+    if (!hasCapturePermission && !hasAllUrls) {
+      return { success: false, error: 'Capture permission not granted' };
+    }
+
+    const tab = sender?.tab;
+    if (!tab?.windowId) {
+      return { success: false, error: 'Missing tab context' };
+    }
+    const { interactionId, rect, dpr } = message || {};
+    if (!interactionId || !rect) {
+      return { success: false, error: 'Missing capture data' };
+    }
+
+    const dataUrl = await capturePreviewFromTab(tab.windowId, rect, dpr || 1);
+    if (!dataUrl) {
+      return { success: false, error: 'Capture failed' };
+    }
+
+    const existing = await storageManager.getInteractionById(interactionId);
+    if (!existing) {
+      return { success: false, error: 'Interaction not found' };
+    }
+
+    const updatedContent = {
+      ...existing.content,
+      previewDataUrl: dataUrl,
+      previewCachedAt: Date.now()
+    };
+
+    await storageManager.updateInteraction(interactionId, { content: updatedContent });
+    return { success: true };
+  } catch (error) {
+    if (!String(error?.message || '').includes('activeTab')) {
+      console.warn('Failed to capture preview:', error);
+    }
+    return { success: false, error: error.message };
+  }
+}
+
+async function capturePreviewFromTab(windowId, rect, dpr) {
+  const screenshotUrl = await chrome.tabs.captureVisibleTab(windowId, {
+    format: 'jpeg',
+    quality: 70
+  });
+  if (!screenshotUrl) return null;
+  if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap !== 'function') {
+    return screenshotUrl;
+  }
+
+  try {
+    const screenshotBlob = await (await fetch(screenshotUrl)).blob();
+    const bitmap = await createImageBitmap(screenshotBlob);
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const safeRect = rect || { x: 0, y: 0, width: bitmap.width / dpr, height: bitmap.height / dpr };
+    const sx = clamp(Math.floor(safeRect.x * dpr), 0, bitmap.width - 1);
+    const sy = clamp(Math.floor(safeRect.y * dpr), 0, bitmap.height - 1);
+    const sw = clamp(Math.floor(safeRect.width * dpr), 1, bitmap.width - sx);
+    const sh = clamp(Math.floor(safeRect.height * dpr), 1, bitmap.height - sy);
+
+    if (sw < 2 || sh < 2) return screenshotUrl;
+
+    const maxWidth = 640;
+    const scale = Math.min(1, maxWidth / sw);
+    const targetW = Math.max(1, Math.round(sw * scale));
+    const targetH = Math.max(1, Math.round(sh * scale));
+
+    const canvas = new OffscreenCanvas(targetW, targetH);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+    const outBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
+    const buffer = await outBlob.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+    return `data:${outBlob.type || 'image/jpeg'};base64,${base64}`;
+  } catch (error) {
+    console.warn('Preview crop failed, using full screenshot:', error);
+    return screenshotUrl;
+  }
+}
+
 /**
  * Save a new interaction
  */
@@ -198,6 +306,70 @@ async function handleSaveInteraction(interaction, sender) {
     console.error('Error in handleSaveInteraction:', error);
     return { success: false, error: error.message };
   }
+}
+
+async function cacheInteractionPreview(interaction) {
+  if (!interaction || !interaction.id) return;
+  if (interaction.content?.previewDataUrl) return;
+  const imageUrl = interaction.content?.imageUrls?.[0];
+  if (!imageUrl) return;
+
+  const dataUrl = await fetchImageAsDataUrl(imageUrl);
+  if (!dataUrl) return;
+
+  const updatedContent = {
+    ...interaction.content,
+    previewDataUrl: dataUrl,
+    previewCachedAt: Date.now()
+  };
+
+  await storageManager.updateInteraction(interaction.id, { content: updatedContent });
+}
+
+async function fetchImageAsDataUrl(url) {
+  let response = await fetch(url, {
+    credentials: 'include',
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    response = await fetch(withCacheBuster(url), {
+      credentials: 'include',
+      cache: 'no-store'
+    });
+  }
+
+  if (!response.ok) {
+    throw new Error(`Image fetch failed: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const buffer = await blob.arrayBuffer();
+  const base64 = arrayBufferToBase64(buffer);
+  const mime = blob.type || 'image/jpeg';
+  return `data:${mime};base64,${base64}`;
+}
+
+function withCacheBuster(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('ct_bust', Date.now().toString());
+    return parsed.toString();
+  } catch (error) {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}ct_bust=${Date.now()}`;
+  }
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
 }
 
 /**
