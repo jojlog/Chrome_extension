@@ -116,6 +116,9 @@ async function handleMessage(message, sender) {
     case 'FETCH_IMAGE_DATA_URL':
       return await handleFetchImageDataUrl(message.url);
 
+    case 'FETCH_INSTAGRAM_CAPTION':
+      return await handleFetchInstagramCaption(message.url);
+
     case 'CAPTURE_POST_PREVIEW':
       return await handleCapturePostPreview(message, sender);
 
@@ -173,6 +176,27 @@ async function handleFetchImageDataUrl(url) {
     return { success: true, dataUrl };
   } catch (error) {
     console.warn('Failed to fetch image data URL:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleFetchInstagramCaption(url) {
+  try {
+    if (!url) {
+      return { success: false, error: 'Missing URL' };
+    }
+    const response = await fetch(url, {
+      credentials: 'include',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const html = await response.text();
+    const caption = extractCaptionFromHtml(html);
+    return { success: true, caption: caption || '' };
+  } catch (error) {
+    console.warn('Failed to fetch Instagram caption:', error);
     return { success: false, error: error.message };
   }
 }
@@ -359,6 +383,54 @@ function withCacheBuster(url) {
     const separator = url.includes('?') ? '&' : '?';
     return `${url}${separator}ct_bust=${Date.now()}`;
   }
+}
+
+function extractCaptionFromHtml(html) {
+  if (!html) return '';
+  const metaMatch = html.match(/property="og:description" content="([^"]*)"/i)
+    || html.match(/name="description" content="([^"]*)"/i);
+  if (!metaMatch) return '';
+
+  const decoded = decodeHtmlEntities(metaMatch[1]).trim();
+  if (!decoded) return '';
+
+  const quoted = decoded.match(/[“"]([^”"]+)[”"]/);
+  if (quoted && quoted[1]) {
+    const text = quoted[1].trim();
+    if (text) return text;
+  }
+
+  const onInstagramMatch = decoded.match(/^(.+?)\s+on\s+instagram\s*[:：]\s*(.+)$/i);
+  if (!onInstagramMatch) return '';
+
+  const authorSegment = (onInstagramMatch[1] || '').trim();
+  const candidate = (onInstagramMatch[2] || '').trim();
+  if (!candidate) return '';
+
+  let authorHandle = authorSegment;
+  const handleMatch = authorSegment.match(/@([\w.]+)/);
+  if (handleMatch && handleMatch[1]) {
+    authorHandle = handleMatch[1];
+  }
+  authorHandle = authorHandle.replace(/^@/, '').trim();
+  const candidateNormalized = candidate.replace(/^@/, '').trim();
+
+  if (authorHandle && candidateNormalized.toLowerCase() === authorHandle.toLowerCase()) {
+    return '';
+  }
+
+  return candidate;
+}
+
+function decodeHtmlEntities(text) {
+  if (!text) return '';
+  return text
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'");
 }
 
 function arrayBufferToBase64(buffer) {

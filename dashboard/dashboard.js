@@ -60,11 +60,23 @@ class DashboardManager {
 
     // Setup listeners
     this.setupEventListeners();
+    this.exposeDebugHelpers();
 
     // Check URL hash for direct actions
     if (window.location.hash === '#settings') {
       this.showSettingsModal();
     }
+  }
+
+
+  exposeDebugHelpers() {
+    if (typeof window === 'undefined') return;
+    window.ctGetStoredInteractions = this.getStoredInteractions.bind(this);
+  }
+
+  async getStoredInteractions() {
+    const { interactions = [] } = await chrome.storage.local.get('interactions');
+    return interactions;
   }
 
   async loadUserCategories() {
@@ -1125,6 +1137,7 @@ class DashboardManager {
         if (dataUrl) {
           imgEl.src = dataUrl;
           this.persistPreviewDataUrl(item, dataUrl);
+          this.maybeFetchInstagramCaption(item);
         } else {
           imgEl.classList.add('image-load-failed');
         }
@@ -1144,6 +1157,7 @@ class DashboardManager {
       }
       imgEl.src = dataUrl;
       this.persistPreviewDataUrl(item, dataUrl);
+      this.maybeFetchInstagramCaption(item);
     };
 
     imgEl.addEventListener('error', onError, { once: true });
@@ -1169,6 +1183,130 @@ class DashboardManager {
     } catch (error) {
       return false;
     }
+  }
+
+  async maybeFetchInstagramCaption(item) {
+    try {
+      if (!item || item.platform !== 'instagram') return;
+      const currentText = (item.content?.text || '').trim();
+      const author = item.metadata?.author || '';
+      if (currentText && !this.isUsernameOnlyCaption(currentText, author)) return;
+      const postUrl = item.content?.url;
+      if (!postUrl) return;
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'FETCH_INSTAGRAM_CAPTION',
+        url: postUrl
+      });
+
+      const caption = (response?.success ? response.caption : '').trim();
+      if (!caption) return;
+
+      const updatedContent = {
+        ...item.content,
+        text: caption
+      };
+
+      item.content = updatedContent;
+      this.itemsById.set(item.id, item);
+      const index = this.allItems.findIndex(entry => entry.id === item.id);
+      if (index !== -1) {
+        this.allItems[index] = item;
+      }
+
+      this.updateCardText(item);
+
+      await chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: item.id,
+        updates: { content: updatedContent }
+      });
+    } catch (error) {
+      console.warn('Failed to fetch Instagram caption:', error);
+    }
+  }
+
+  updateCardText(item) {
+    if (!item || !item.id) return;
+    const card = document.querySelector(`.content-card[data-id="${CSS.escape(item.id)}"]`);
+    const textEl = card?.querySelector('.content-text');
+    if (!textEl) return;
+    const displayText = this.getDisplayText(item);
+    textEl.textContent = truncateText(displayText, 150);
+  }
+
+  getDisplayText(item) {
+    if (!item || !item.content) return '';
+    const text = (item.content.text || '').trim();
+    if (!text) return '';
+    if (item.platform !== 'instagram') return text;
+    return this.stripInstagramUsername(text, item.metadata?.author);
+  }
+
+  isUsernameOnlyCaption(text, author = '') {
+    if (!text) return false;
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+
+    const authorClean = (author || '').replace(/^@/, '').trim();
+    const normalized = trimmed.replace(/^@/, '').trim();
+    if (authorClean && normalized.toLowerCase() === authorClean.toLowerCase()) {
+      return true;
+    }
+
+    if (!/\s/.test(trimmed)) {
+      if (trimmed.startsWith('@')) return true;
+      if (/^[\w.]+$/.test(trimmed) && /[._\d]/.test(trimmed)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  stripInstagramUsername(text, author = '') {
+    if (!text) return '';
+    let cleaned = text.trim();
+    const authorClean = (author || '').replace(/^@/, '').trim();
+
+    // Prefer quoted caption if present (Instagram metadata format)
+    const quoted = cleaned.match(/[“"]([^”"]+)[”"]/);
+    if (quoted && quoted[1]) {
+      return quoted[1].trim();
+    }
+
+    if (authorClean) {
+      const direct = new RegExp(`^@?${this.escapeRegex(authorClean)}\\s*[\\-–—:·|]`, 'i');
+      cleaned = cleaned.replace(direct, '').trim();
+
+      const onIg = new RegExp(`^@?${this.escapeRegex(authorClean)}\\s+on\\s+instagram\\s*:?\\s*`, 'i');
+      cleaned = cleaned.replace(onIg, '').trim();
+
+      const photoBy = new RegExp(`^(photo|image)\\s+by\\s+@?${this.escapeRegex(authorClean)}\\s*:?\\s*`, 'i');
+      cleaned = cleaned.replace(photoBy, '').trim();
+
+      const byUser = new RegExp(`^by\\s+@?${this.escapeRegex(authorClean)}\\s*:?\\s*`, 'i');
+      cleaned = cleaned.replace(byUser, '').trim();
+    }
+
+    cleaned = cleaned.replace(/^@[\w.]+\s*[:\-–—|·•]\s*/i, '').trim();
+    cleaned = cleaned.replace(/^\s*on instagram\s*:?/i, '').trim();
+    cleaned = cleaned.replace(/^@[\w.]+\s+on\s+instagram\s*:?/i, '').trim();
+    cleaned = cleaned.replace(/^[\w.]+\s+on\s+instagram\s*:?/i, '').trim();
+    cleaned = cleaned.replace(/^(photo|image)\s+by\s+@?[\w.]+\s*:?/i, '').trim();
+    cleaned = cleaned.replace(/^by\s+@?[\w.]+\s*:?/i, '').trim();
+    cleaned = cleaned.replace(/^@?[\w.]+\s*[|·•\-–—:]\s*/i, '').trim();
+
+    // If the remaining text is just a username, blank it out
+    if (/^@?[\w.]+$/.test(cleaned)) {
+      return '';
+    }
+
+    return cleaned;
+  }
+
+  escapeRegex(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   async persistPreviewDataUrl(item, dataUrl) {

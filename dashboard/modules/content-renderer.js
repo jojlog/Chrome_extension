@@ -266,7 +266,8 @@ export class ContentRenderer {
 
         const text = document.createElement('p');
         text.className = 'content-text';
-        text.textContent = truncateText(item.content.text, 150);
+        const displayText = this.dashboardManager.getDisplayText(item);
+        text.textContent = truncateText(displayText, 150);
 
         body.appendChild(text);
 
