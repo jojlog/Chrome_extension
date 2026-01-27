@@ -292,12 +292,12 @@ export class ContentRenderer {
                         event.stopPropagation();
                         loadBtn.disabled = true;
                         loadBtn.textContent = 'Loading...';
-                        this.dashboardManager.loadImagePreview(img, item.content.imageUrls[0]);
+                        this.dashboardManager.loadImagePreview(img, item);
                         loadBtn.remove();
                     });
                     imageContainer.appendChild(loadBtn);
                 } else {
-                    this.dashboardManager.loadImagePreview(img, item.content.imageUrls[0]);
+                    this.dashboardManager.loadImagePreview(img, item);
                 }
             }
         }

@@ -1117,12 +1117,14 @@ class DashboardManager {
     }
   }
 
-  loadImagePreview(imgEl, url) {
+  loadImagePreview(imgEl, item) {
+    const url = item?.content?.imageUrls?.[0];
     if (!imgEl || !url) return;
     if (this.shouldAvoidRemoteImage(url)) {
       this.requestImageDataUrl(url).then((dataUrl) => {
         if (dataUrl) {
           imgEl.src = dataUrl;
+          this.persistPreviewDataUrl(item, dataUrl);
         } else {
           imgEl.classList.add('image-load-failed');
         }
@@ -1141,6 +1143,7 @@ class DashboardManager {
         return;
       }
       imgEl.src = dataUrl;
+      this.persistPreviewDataUrl(item, dataUrl);
     };
 
     imgEl.addEventListener('error', onError, { once: true });
@@ -1165,6 +1168,34 @@ class DashboardManager {
       return host.includes('instagram') || host.includes('cdninstagram') || host.includes('fbcdn.net');
     } catch (error) {
       return false;
+    }
+  }
+
+  async persistPreviewDataUrl(item, dataUrl) {
+    try {
+      if (!item || !dataUrl) return;
+      if (item.content?.previewDataUrl) return;
+
+      const updatedContent = {
+        ...item.content,
+        previewDataUrl: dataUrl,
+        previewCachedAt: Date.now()
+      };
+
+      item.content = updatedContent;
+      this.itemsById.set(item.id, item);
+      const index = this.allItems.findIndex(entry => entry.id === item.id);
+      if (index !== -1) {
+        this.allItems[index] = item;
+      }
+
+      await chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: item.id,
+        updates: { content: updatedContent }
+      });
+    } catch (error) {
+      console.warn('Failed to persist preview data:', error);
     }
   }
 

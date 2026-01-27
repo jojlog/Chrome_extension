@@ -312,8 +312,11 @@ class InstagramTracker extends BasePlatformTracker {
       }
     );
 
+    const imageEl = ContentExtractor.findWithFallback(postElement, InstagramSelectors.SAVED_GRID_IMAGE);
+    const altText = imageEl?.getAttribute('alt') || '';
+
     return {
-      text: '',
+      text: ContentExtractor.cleanText(altText || ''),
       imageUrls: imageUrls,
       videoUrl: null,
       url: url,
