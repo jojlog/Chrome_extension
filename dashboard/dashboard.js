@@ -43,6 +43,9 @@ class DashboardManager {
       sensitivity: 50
     };
     this.instagramCaptionFetchAttempted = new Set();
+    this.thumbnailBackfillAttempted = new Set();
+    this.thumbnailBackfillQueue = [];
+    this.thumbnailBackfillActive = false;
 
     // Bulk selection mode
     this.selectMode = false;
@@ -144,6 +147,7 @@ class DashboardManager {
     // Render (pass selectMode and selectedItems)
     this.contentRenderer.renderContent(sorted, this.viewMode, this.selectMode, this.selectedItems);
     this.queueInstagramCaptionFetch(sorted);
+    this.queueThumbnailBackfill(sorted);
 
     // Update selection bar if in select mode
     if (this.selectMode) {
@@ -162,6 +166,82 @@ class DashboardManager {
       this.instagramCaptionFetchAttempted.add(item.id);
       this.maybeFetchInstagramCaption(item);
     });
+  }
+
+  queueThumbnailBackfill(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const now = Date.now();
+    items.forEach(item => {
+      if (!item || !item.id) return;
+      if (this.thumbnailBackfillAttempted.has(item.id)) return;
+      if (!this.shouldBackfillThumbnail(item, now)) return;
+      this.thumbnailBackfillAttempted.add(item.id);
+      this.thumbnailBackfillQueue.push(item);
+    });
+    this.processThumbnailBackfillQueue();
+  }
+
+  shouldBackfillThumbnail(item, now) {
+    if (!item || !item.content) return false;
+    if (item.platform !== 'instagram') return false;
+    if (!item.content.videoUrl) return false;
+    if (item.content.previewDataUrl) return false;
+    if (item.content.imageUrls && item.content.imageUrls.length > 0) return false;
+    if (!item.content.url) return false;
+    const fetchedAt = item.content.thumbnailFetchedAt || 0;
+    const ttlMs = 14 * 24 * 60 * 60 * 1000;
+    if (fetchedAt && (now - fetchedAt) < ttlMs) return false;
+    return true;
+  }
+
+  processThumbnailBackfillQueue() {
+    if (this.thumbnailBackfillActive) return;
+    if (this.thumbnailBackfillQueue.length === 0) return;
+    this.thumbnailBackfillActive = true;
+    const item = this.thumbnailBackfillQueue.shift();
+    const jitterMs = 2000 + Math.floor(Math.random() * 3000);
+    setTimeout(async () => {
+      try {
+        await this.fetchThumbnailForItem(item);
+      } finally {
+        this.thumbnailBackfillActive = false;
+        this.processThumbnailBackfillQueue();
+      }
+    }, jitterMs);
+  }
+
+  async fetchThumbnailForItem(item) {
+    if (!item || !item.content?.url) return;
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'FETCH_POST_THUMBNAIL',
+        url: item.content.url
+      });
+      const thumbnailUrl = (response?.success ? response.thumbnailUrl : '').trim();
+      const updatedContent = {
+        ...item.content,
+        thumbnailFetchedAt: Date.now()
+      };
+      if (thumbnailUrl) {
+        updatedContent.imageUrls = [thumbnailUrl];
+      }
+      item.content = updatedContent;
+      this.itemsById.set(item.id, item);
+      const index = this.allItems.findIndex(entry => entry.id === item.id);
+      if (index !== -1) {
+        this.allItems[index] = item;
+      }
+      await chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: item.id,
+        updates: { content: updatedContent }
+      });
+      if (thumbnailUrl) {
+        this.filterAndDisplayContent();
+      }
+    } catch (error) {
+      console.warn('Failed to backfill thumbnail:', error);
+    }
   }
 
   // --- Actions ---

@@ -119,6 +119,9 @@ async function handleMessage(message, sender) {
     case 'FETCH_INSTAGRAM_CAPTION':
       return await handleFetchInstagramCaption(message.url);
 
+    case 'FETCH_POST_THUMBNAIL':
+      return await handleFetchPostThumbnail(message.url);
+
     case 'CAPTURE_POST_PREVIEW':
       return await handleCapturePostPreview(message, sender);
 
@@ -201,15 +204,39 @@ async function handleFetchInstagramCaption(url) {
   }
 }
 
+async function handleFetchPostThumbnail(url) {
+  try {
+    if (!url) {
+      return { success: false, error: 'Missing URL' };
+    }
+    const response = await fetch(url, {
+      credentials: 'include',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const html = await response.text();
+    const thumbnailUrl = extractThumbnailFromHtml(html);
+    return { success: true, thumbnailUrl: thumbnailUrl || '' };
+  } catch (error) {
+    console.warn('Failed to fetch post thumbnail:', error);
+    return { success: false, error: error.message };
+  }
+}
+
 async function handleCapturePostPreview(message, sender) {
   try {
-    const hasCapturePermission = await chrome.permissions.contains({
+    const hasActiveTab = await chrome.permissions.contains({
       permissions: ['activeTab']
+    });
+    const hasTabsPermission = await chrome.permissions.contains({
+      permissions: ['tabs']
     });
     const hasAllUrls = await chrome.permissions.contains({
       origins: ['<all_urls>']
     });
-    if (!hasCapturePermission && !hasAllUrls) {
+    if (!hasActiveTab && !hasTabsPermission && !hasAllUrls) {
       return { success: false, error: 'Capture permission not granted' };
     }
 
@@ -422,6 +449,114 @@ function extractCaptionFromHtml(html) {
   return candidate;
 }
 
+function extractThumbnailFromHtml(html) {
+  if (!html) return '';
+
+  const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) || [];
+  for (const match of jsonLdMatches) {
+    const jsonMatch = match.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!jsonMatch || !jsonMatch[1]) continue;
+    try {
+      const parsed = JSON.parse(jsonMatch[1].trim());
+      const candidate = findThumbnailInJsonLd(parsed);
+      if (candidate) return candidate;
+    } catch (error) {
+      continue;
+    }
+  }
+
+  const ogImageMatch = html.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
+    || html.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+  if (ogImageMatch && ogImageMatch[1]) {
+    const decoded = decodeHtmlEntities(ogImageMatch[1]).trim();
+    if (decoded && !isLikelyPlaceholderThumbnail(decoded) && !isLikelyProfileImage(decoded)) {
+      return decoded;
+    }
+  }
+
+  const twitterImageMatch = html.match(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i)
+    || html.match(/content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i);
+  if (twitterImageMatch && twitterImageMatch[1]) {
+    const decoded = decodeHtmlEntities(twitterImageMatch[1]).trim();
+    if (decoded && !isLikelyPlaceholderThumbnail(decoded) && !isLikelyProfileImage(decoded)) {
+      return decoded;
+    }
+  }
+
+  return '';
+}
+
+function findThumbnailInJsonLd(payload) {
+  if (!payload) return '';
+  if (Array.isArray(payload)) {
+    for (const entry of payload) {
+      const candidate = findThumbnailInJsonLd(entry);
+      if (candidate) return candidate;
+    }
+    return '';
+  }
+
+  if (typeof payload === 'object') {
+    const direct = normalizeThumbnailValue(payload.thumbnailUrl || payload.thumbnailURL || payload.thumbnail || payload.image);
+    if (direct) return direct;
+
+    if (payload.video && typeof payload.video === 'object') {
+      const fromVideo = normalizeThumbnailValue(payload.video.thumbnailUrl || payload.video.thumbnailURL || payload.video.image);
+      if (fromVideo) return fromVideo;
+    }
+
+    for (const value of Object.values(payload)) {
+      const candidate = findThumbnailInJsonLd(value);
+      if (candidate) return candidate;
+    }
+  }
+
+  return '';
+}
+
+function normalizeThumbnailValue(value) {
+  if (!value) return '';
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const candidate = normalizeThumbnailValue(entry);
+      if (candidate) return candidate;
+    }
+    return '';
+  }
+  if (typeof value === 'string') {
+    const decoded = decodeHtmlEntities(value).trim();
+    if (!decoded || isLikelyPlaceholderThumbnail(decoded) || isLikelyProfileImage(decoded)) return '';
+    return decoded;
+  }
+  if (typeof value === 'object') {
+    const url = value.url || value.contentUrl;
+    if (url) {
+      const decoded = decodeHtmlEntities(url).trim();
+      if (!decoded || isLikelyPlaceholderThumbnail(decoded) || isLikelyProfileImage(decoded)) return '';
+      return decoded;
+    }
+  }
+  return '';
+}
+
+function isLikelyPlaceholderThumbnail(url) {
+  if (!url) return true;
+  const lower = url.toLowerCase();
+  return lower.includes('placeholder') ||
+    lower.includes('logo') ||
+    lower.includes('sprite') ||
+    lower.includes('blank') ||
+    lower.includes('default');
+}
+
+function isLikelyProfileImage(url) {
+  if (!url) return true;
+  const lower = url.toLowerCase();
+  return lower.includes('profile') ||
+    lower.includes('avatar') ||
+    lower.includes('s150x150') ||
+    lower.includes('s320x320');
+}
 function decodeHtmlEntities(text) {
   if (!text) return '';
   let decoded = text
