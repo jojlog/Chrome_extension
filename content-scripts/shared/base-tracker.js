@@ -742,6 +742,10 @@ class BasePlatformTracker {
       this.pendingSaves.set(saveKey, true);
       console.log(`${this.platform}: Capturing ${type} interaction`);
       const content = this.extractContent(postElement);
+      const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+      if (normalizedUrl) {
+        content.url = normalizedUrl;
+      }
       const metadata = this.extractMetadata(postElement);
       const viewDuration = this.timeTracker ? this.timeTracker.getDuration(postId) : 0;
       // Get logged-in user info
@@ -1004,6 +1008,10 @@ class BasePlatformTracker {
    */
   async captureImportedInteraction(type, postElement) {
     const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
     const metadata = this.extractMetadata(postElement);
     const loggedInUser = this.extractLoggedInUser();
     const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);

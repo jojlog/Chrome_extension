@@ -46,6 +46,7 @@ class DashboardManager {
     this.thumbnailBackfillAttempted = new Set();
     this.thumbnailBackfillQueue = [];
     this.thumbnailBackfillActive = false;
+    this.instagramUrlCleanupRan = false;
 
     // Bulk selection mode
     this.selectMode = false;
@@ -105,6 +106,7 @@ class DashboardManager {
         this.aiTokenCache = new Map();
         this.aiSuggestedItems = [];
         this.aiSuggestedScoreMap = new Map();
+        this.cleanupInstagramUrls();
         this.loadCategoriesFromContent();
         this.updateCategorySuggestionBar();
         this.filterAndDisplayContent();
@@ -115,6 +117,52 @@ class DashboardManager {
       console.error('Error loading content:', error);
     } finally {
       if (loadingEl) loadingEl.style.display = 'none';
+    }
+  }
+
+  cleanupInstagramUrls() {
+    if (this.instagramUrlCleanupRan) return;
+    this.instagramUrlCleanupRan = true;
+    const updates = [];
+
+    this.allItems.forEach(item => {
+      if (!item || item.platform !== 'instagram') return;
+      const url = item.content?.url;
+      if (!url) return;
+      const normalized = this.normalizeInstagramUrl(url);
+      if (normalized && normalized !== url) {
+        const updatedContent = { ...item.content, url: normalized };
+        item.content = updatedContent;
+        this.itemsById.set(item.id, item);
+        updates.push({ id: item.id, updates: { content: updatedContent } });
+      }
+    });
+
+    if (updates.length === 0) return;
+
+    updates.forEach(({ id, updates: data }) => {
+      chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id,
+        updates: data
+      }).catch(() => {});
+    });
+  }
+
+  normalizeInstagramUrl(url) {
+    try {
+      const parsed = new URL(url);
+      if (!parsed.hostname.includes('instagram.com')) return url;
+      let path = parsed.pathname;
+      path = path.replace(/\/liked_by\/?$/i, '/');
+      path = path.replace(/\/comments\/?$/i, '/');
+      path = path.replace(/\/(reel|p)\/([^\/]+)\/.+$/i, '/$1/$2/');
+      parsed.pathname = path;
+      parsed.search = '';
+      parsed.hash = '';
+      return parsed.toString();
+    } catch (error) {
+      return url;
     }
   }
 

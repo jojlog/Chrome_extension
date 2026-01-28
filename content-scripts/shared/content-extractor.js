@@ -286,6 +286,14 @@ class ContentExtractor {
       const hostname = parsed.hostname.toLowerCase();
       if (platform === 'twitter' && (hostname.endsWith('twitter.com') || hostname.endsWith('x.com'))) {
         parsed.hostname = 'x.com';
+      } else if (platform === 'instagram' && hostname.endsWith('instagram.com')) {
+        const match = parsed.pathname.match(/^\/(p|reel|tv)\/([^\/]+)\//i);
+        if (match && match[1] && match[2]) {
+          parsed.pathname = `/${match[1].toLowerCase()}/${match[2]}/`;
+        }
+        parsed.pathname = parsed.pathname
+          .replace(/\/liked_by\/?$/i, '/')
+          .replace(/\/comments\/?$/i, '/');
       } else {
         parsed.hostname = hostname;
       }
