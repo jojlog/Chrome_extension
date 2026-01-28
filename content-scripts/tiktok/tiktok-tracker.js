@@ -175,13 +175,14 @@ class TikTokTracker extends BasePlatformTracker {
     const videoElement = ContentExtractor.findWithFallback(postElement, TikTokSelectors.POST_VIDEO);
     const videoUrl = videoElement ? (videoElement.src || videoElement.currentSrc) : null;
     const posterUrl = this.extractPosterUrl(videoElement);
+    const fallbackImages = posterUrl ? [] : this.extractInlineThumbnails(postElement);
 
     const url = this.extractPostUrl(postElement);
     const hashtags = ContentExtractor.extractHashtags(text);
 
     return {
       text: ContentExtractor.cleanText(text),
-      imageUrls: posterUrl ? [posterUrl] : [], // Use poster as thumbnail when available
+      imageUrls: posterUrl ? [posterUrl] : fallbackImages, // Use poster or inline thumbnail
       videoUrl: videoUrl,
       url: url,
       hashtags: hashtags
@@ -452,6 +453,23 @@ class TikTokTracker extends BasePlatformTracker {
       return poster;
     }
     return '';
+  }
+
+  extractInlineThumbnails(postElement) {
+    if (!postElement) return [];
+    const candidates = ContentExtractor.extractImageUrls(
+      postElement,
+      'img[src], img[srcset], picture img',
+      (img) => {
+        const src = (img.currentSrc || img.src || '').toLowerCase();
+        const alt = (img.getAttribute('alt') || '').toLowerCase();
+        if (!src) return false;
+        if (src.includes('avatar') || src.includes('profile')) return false;
+        if (alt.includes('avatar') || alt.includes('profile')) return false;
+        return src.includes('tiktokcdn') || src.includes('ttcdn') || src.includes('tiktok');
+      }
+    );
+    return candidates.slice(0, 3);
   }
 
   extractScrollIndex(postElement) {
