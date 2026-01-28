@@ -210,40 +210,32 @@ class TikTokTracker extends BasePlatformTracker {
         if (normalizedAuthor && !authorCandidates.includes(normalizedAuthor)) continue;
         if (normalizedAuthorText && !authorCandidates.includes(normalizedAuthorText)) continue;
       }
+
+      let matchedSignal = false;
       if (normalizedMusic && this.normalizeId(item.musicId) === normalizedMusic) {
+        matchedSignal = true;
+      } else if (normalizedMusicTitle && item.musicTitleNormalized) {
+        if (item.musicTitleNormalized.includes(normalizedMusicTitle) || normalizedMusicTitle.includes(item.musicTitleNormalized)) {
+          matchedSignal = true;
+        }
+      } else if (normalizedText && item.descNormalized) {
+        if (item.descNormalized.includes(normalizedText.slice(0, 30)) || normalizedText.includes(item.descNormalized.slice(0, 30))) {
+          matchedSignal = true;
+        }
+      }
+
+      if (matchedSignal) {
         bestMatch = item;
         break;
       }
-      if (normalizedMusicTitle && item.musicTitleNormalized) {
-        if (item.musicTitleNormalized.includes(normalizedMusicTitle) || normalizedMusicTitle.includes(item.musicTitleNormalized)) {
-          bestMatch = item;
-          break;
-        }
-      }
-      if (normalizedText && item.descNormalized) {
-        if (!item.descNormalized.includes(normalizedText.slice(0, 30)) && !normalizedText.includes(item.descNormalized.slice(0, 30))) {
-          continue;
-        }
-      }
-      bestMatch = item;
-      break;
-    }
-
-    if (!bestMatch && (normalizedAuthor || normalizedAuthorText)) {
-      bestMatch = items.find(item => {
-        const authorCandidates = [
-          this.normalizeHandle(item.author),
-          this.normalizeHandle(item.authorUniqueId),
-          this.normalizeHandle(item.authorNickname)
-        ].filter(Boolean);
-        if (normalizedAuthor && authorCandidates.includes(normalizedAuthor)) return true;
-        if (normalizedAuthorText && authorCandidates.includes(normalizedAuthorText)) return true;
-        return false;
-      }) || null;
     }
 
     if (!bestMatch && typeof scrollIndex === 'number' && scrollIndex >= 0 && scrollIndex < items.length) {
       bestMatch = items[scrollIndex];
+    }
+
+    if (!bestMatch && items.length === 1) {
+      bestMatch = items[0];
     }
 
     if (!bestMatch) return '';
