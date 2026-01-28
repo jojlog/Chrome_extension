@@ -424,13 +424,25 @@ function extractCaptionFromHtml(html) {
 
 function decodeHtmlEntities(text) {
   if (!text) return '';
-  return text
+  let decoded = text
     .replace(/&quot;/g, '"')
     .replace(/&#34;/g, '"')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&#39;/g, "'");
+
+  decoded = decoded.replace(/&#(\d+);/g, (_match, num) => {
+    const code = Number(num);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+  });
+
+  decoded = decoded.replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => {
+    const code = parseInt(hex, 16);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+  });
+
+  return decoded;
 }
 
 function arrayBufferToBase64(buffer) {

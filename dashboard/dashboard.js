@@ -42,6 +42,7 @@ class DashboardManager {
       mode: 'text',
       sensitivity: 50
     };
+    this.instagramCaptionFetchAttempted = new Set();
 
     // Bulk selection mode
     this.selectMode = false;
@@ -142,11 +143,25 @@ class DashboardManager {
 
     // Render (pass selectMode and selectedItems)
     this.contentRenderer.renderContent(sorted, this.viewMode, this.selectMode, this.selectedItems);
+    this.queueInstagramCaptionFetch(sorted);
 
     // Update selection bar if in select mode
     if (this.selectMode) {
       this.updateSelectionBar();
     }
+  }
+
+  queueInstagramCaptionFetch(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    items.forEach(item => {
+      if (!item || item.platform !== 'instagram' || !item.id) return;
+      if (this.instagramCaptionFetchAttempted.has(item.id)) return;
+      const displayText = this.getDisplayText(item);
+      if (displayText) return;
+      if (!item.content?.url) return;
+      this.instagramCaptionFetchAttempted.add(item.id);
+      this.maybeFetchInstagramCaption(item);
+    });
   }
 
   // --- Actions ---
@@ -1188,9 +1203,8 @@ class DashboardManager {
   async maybeFetchInstagramCaption(item) {
     try {
       if (!item || item.platform !== 'instagram') return;
-      const currentText = (item.content?.text || '').trim();
-      const author = item.metadata?.author || '';
-      if (currentText && !this.isUsernameOnlyCaption(currentText, author)) return;
+      const displayText = this.getDisplayText(item);
+      if (displayText) return;
       const postUrl = item.content?.url;
       if (!postUrl) return;
 
