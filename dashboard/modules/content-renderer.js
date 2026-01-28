@@ -13,16 +13,28 @@ export class ContentRenderer {
      * @param {Array} categories 
      * @param {string} activeCategory 
      */
-    renderCategories(categories, activeCategory) {
+    renderCategories(categories, activeCategory, categoryCounts = new Map(), totalCount = 0) {
         const list = document.getElementById('category-list');
         if (!list) return;
 
         list.innerHTML = '';
 
+        const getCount = (path) => {
+            if (!categoryCounts || typeof categoryCounts.get !== 'function') return 0;
+            return categoryCounts.get(path) || 0;
+        };
+
         // "All Categories" Item
         const allLi = document.createElement('li');
         allLi.dataset.category = 'all';
-        allLi.textContent = 'All Categories';
+        const allLabel = document.createElement('span');
+        allLabel.className = 'category-name';
+        allLabel.textContent = 'All Categories';
+        const allCount = document.createElement('span');
+        allCount.className = 'category-count';
+        allCount.textContent = `(${Number.isFinite(totalCount) ? totalCount : 0})`;
+        allLi.appendChild(allLabel);
+        allLi.appendChild(allCount);
         if (activeCategory === 'all') allLi.classList.add('active');
         allLi.addEventListener('click', () => {
             this.dashboardManager.setFilter('category', 'all');
@@ -106,6 +118,11 @@ export class ContentRenderer {
                 nameSpan.className = 'category-name';
                 nameSpan.textContent = node.name;
                 row.appendChild(nameSpan);
+
+                const countSpan = document.createElement('span');
+                countSpan.className = 'category-count';
+                countSpan.textContent = `(${getCount(node.fullPath)})`;
+                row.appendChild(countSpan);
 
                 // Row Click - Filter
                 row.addEventListener('click', () => {

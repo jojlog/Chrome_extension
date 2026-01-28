@@ -102,6 +102,10 @@ body {
   cursor: pointer;
   transition: background 0.2s;
   border-left: 3px solid transparent;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .category-list>li[data-category="all"].active {
@@ -136,6 +140,17 @@ body {
   transition: background 0.2s;
   border-left: 3px solid transparent;
   color: var(--ink);
+}
+
+.category-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.category-item.active .category-count,
+.category-list>li[data-category="all"].active .category-count {
+  color: var(--accent);
 }
 
 .category-row:hover {

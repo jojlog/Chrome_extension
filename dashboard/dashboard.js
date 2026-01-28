@@ -180,9 +180,33 @@ class DashboardManager {
     this.availableCategories = uniqueCats;
 
     // Render
-    this.contentRenderer.renderCategories(uniqueCats, this.currentFilters.category);
+    const categoryCounts = this.getCategoryCounts();
+    this.contentRenderer.renderCategories(
+      uniqueCats,
+      this.currentFilters.category,
+      categoryCounts,
+      this.allItems.length
+    );
     this.updateCategoryFilterOptions(uniqueCats);
     this.updateReorgCategoryList();
+  }
+
+  getCategoryCounts() {
+    const counts = new Map();
+
+    this.allItems.forEach(item => {
+      const categories = item?.categories || [];
+      categories.forEach(category => {
+        if (!category) return;
+        const parts = category.split('/');
+        for (let i = 0; i < parts.length; i += 1) {
+          const path = parts.slice(0, i + 1).join('/');
+          counts.set(path, (counts.get(path) || 0) + 1);
+        }
+      });
+    });
+
+    return counts;
   }
 
   filterAndDisplayContent() {
