@@ -174,13 +174,14 @@ class TikTokTracker extends BasePlatformTracker {
 
     const videoElement = ContentExtractor.findWithFallback(postElement, TikTokSelectors.POST_VIDEO);
     const videoUrl = videoElement ? (videoElement.src || videoElement.currentSrc) : null;
+    const posterUrl = this.extractPosterUrl(videoElement);
 
     const url = this.extractPostUrl(postElement);
     const hashtags = ContentExtractor.extractHashtags(text);
 
     return {
       text: ContentExtractor.cleanText(text),
-      imageUrls: [], // TikTok is primarily video
+      imageUrls: posterUrl ? [posterUrl] : [], // Use poster as thumbnail when available
       videoUrl: videoUrl,
       url: url,
       hashtags: hashtags
@@ -299,14 +300,39 @@ class TikTokTracker extends BasePlatformTracker {
       if (event.source !== window) return;
       const data = event.data || {};
       if (data.type !== 'CT_TIKTOK_FEED') return;
-      console.log('tiktok: received feed items', data.items?.slice?.(0, 2));
-      this.ingestFeedData({ itemList: data.items });
+      this.ingestFeedItems(data.items);
     });
+  }
+
+  ingestFeedItems(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    const normalized = items.map(item => {
+      if (!item || !item.id) return null;
+      const author = typeof item.author === 'string' ? item.author : (item.authorUniqueId || item.authorNickname || item.authorName);
+      if (!author) return null;
+      return {
+        id: String(item.id),
+        author: String(author),
+        authorUniqueId: item.authorUniqueId ? String(item.authorUniqueId) : '',
+        authorNickname: item.authorNickname ? String(item.authorNickname) : '',
+        desc: item.desc ? String(item.desc) : '',
+        descNormalized: item.desc ? this.normalizeText(String(item.desc)) : '',
+        musicId: item.musicId ? String(item.musicId) : '',
+        musicTitleNormalized: item.musicTitle ? this.normalizeText(String(item.musicTitle)) : (item.musicTitleNormalized || ''),
+        shareUrl: item.shareUrl ? String(item.shareUrl) : ''
+      };
+    }).filter(Boolean);
+    if (normalized.length === 0) return;
+    this.mergeFeedItems(normalized);
   }
 
   ingestFeedData(data) {
     const items = this.extractItemsFromFeedData(data);
     if (!items || items.length === 0) return;
+    this.mergeFeedItems(items);
+  }
+
+  mergeFeedItems(items) {
     const merged = new Map();
     for (const item of this.stateCache.items) {
       if (item?.id) merged.set(item.id, item);
@@ -324,12 +350,13 @@ class TikTokTracker extends BasePlatformTracker {
     return list.map(item => {
       const id = item?.id || item?.aweme_id || item?.itemId;
       const desc = item?.desc || item?.description || item?.title;
+      const authorDirect = typeof item?.author === 'string' ? item.author : '';
       const authorUniqueId = item?.author?.uniqueId || item?.author?.unique_id || item?.author?.authorName;
       const authorNickname = item?.author?.nickname || item?.author?.nick_name || item?.author?.nickname || item?.author?.displayName;
-      const author = authorUniqueId || authorNickname || item?.authorName;
+      const author = authorDirect || authorUniqueId || authorNickname || item?.authorName;
       const musicId = item?.music?.id || item?.music?.musicId || item?.music?.mid || item?.music?.id_str;
-      const musicTitle = item?.music?.title || item?.music?.music_name || item?.music?.musicName || item?.music?.songName;
-      const shareUrl = item?.shareInfo?.share_url || item?.shareInfo?.shareUrl || item?.shareMeta?.share_url || item?.shareMeta?.shareUrl || item?.share_url || item?.shareUrl;
+      const musicTitle = item?.music?.title || item?.music?.music_name || item?.music?.musicName || item?.music?.songName || item?.musicTitle;
+      const shareUrl = item?.shareInfo?.share_url || item?.shareInfo?.shareUrl || item?.shareMeta?.share_url || item?.shareMeta?.shareUrl || item?.share_url || item?.shareUrl || item?.share_url;
       if (!id || !author) return null;
       return {
         id: String(id),
@@ -338,9 +365,9 @@ class TikTokTracker extends BasePlatformTracker {
         authorNickname: authorNickname ? String(authorNickname) : '',
         desc: desc ? String(desc) : '',
         descNormalized: desc ? this.normalizeText(String(desc)) : '',
-        musicId: musicId ? String(musicId) : '',
-        musicTitleNormalized: musicTitle ? this.normalizeText(String(musicTitle)) : '',
-        shareUrl: shareUrl ? String(shareUrl) : ''
+        musicId: musicId ? String(musicId) : (item.musicId ? String(item.musicId) : ''),
+        musicTitleNormalized: musicTitle ? this.normalizeText(String(musicTitle)) : (item.musicTitleNormalized || ''),
+        shareUrl: shareUrl ? String(shareUrl) : (item.shareUrl ? String(item.shareUrl) : '')
       };
     }).filter(Boolean);
   }
@@ -413,6 +440,18 @@ class TikTokTracker extends BasePlatformTracker {
     const musicLink = postElement.querySelector('a[href*="/music/"]');
     if (!musicLink) return '';
     return ContentExtractor.extractText(musicLink);
+  }
+
+  extractPosterUrl(videoElement) {
+    if (!videoElement) return '';
+    const poster = videoElement.getAttribute('poster') ||
+      videoElement.getAttribute('data-poster') ||
+      videoElement.dataset?.poster ||
+      videoElement.dataset?.src;
+    if (poster && typeof poster === 'string' && poster.startsWith('http')) {
+      return poster;
+    }
+    return '';
   }
 
   extractScrollIndex(postElement) {
