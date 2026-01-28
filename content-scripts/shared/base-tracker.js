@@ -787,6 +787,9 @@ class BasePlatformTracker {
 
             if (response.skippedDuplicate) {
               console.log(`${this.platform}: Skipped duplicate ${type} interaction`);
+              if (type === 'save') {
+                this.handleDuplicateSave(contentKey, postElement);
+              }
               return;
             }
 
@@ -844,6 +847,42 @@ class BasePlatformTracker {
           aiFailureReason: errorMessage
         });
       }
+    }
+  }
+
+  async handleDuplicateSave(contentKey, postElement) {
+    try {
+      if (!contentKey) return;
+      const existingResponse = await chrome.runtime.sendMessage({
+        type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
+        contentKey
+      });
+      const existing = existingResponse?.success ? existingResponse.data : null;
+      if (!existing) return;
+
+      const updates = {};
+      if (existing.interactionType && !existing.interactionType.includes('save')) {
+        updates.interactionType = `${existing.interactionType},save`;
+      } else if (!existing.interactionType) {
+        updates.interactionType = 'save';
+      }
+      if (!existing.savedAt) {
+        updates.savedAt = Date.now();
+      }
+
+      if (Object.keys(updates).length > 0) {
+        await chrome.runtime.sendMessage({
+          type: MESSAGE_TYPES.UPDATE_INTERACTION,
+          id: existing.id,
+          updates
+        });
+      }
+
+      if (postElement && !existing.content?.previewDataUrl) {
+        this.requestPreviewCapture(postElement, existing.id);
+      }
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to update duplicate save`, error);
     }
   }
 

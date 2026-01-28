@@ -231,7 +231,7 @@ class DashboardManager {
 
   shouldBackfillThumbnail(item, now) {
     if (!item || !item.content) return false;
-    if (item.platform !== 'instagram') return false;
+    if (!(item.platform === 'instagram' || item.platform === 'tiktok')) return false;
     if (!item.content.videoUrl) return false;
     if (item.content.previewDataUrl) return false;
     if (item.content.imageUrls && item.content.imageUrls.length > 0) return false;

@@ -122,6 +122,9 @@ async function handleMessage(message, sender) {
     case 'FETCH_POST_THUMBNAIL':
       return await handleFetchPostThumbnail(message.url);
 
+    case 'INJECT_TIKTOK_HOOK':
+      return await handleInjectTikTokHook(sender);
+
     case 'CAPTURE_POST_PREVIEW':
       return await handleCapturePostPreview(message, sender);
 
@@ -221,6 +224,116 @@ async function handleFetchPostThumbnail(url) {
     return { success: true, thumbnailUrl: thumbnailUrl || '' };
   } catch (error) {
     console.warn('Failed to fetch post thumbnail:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleInjectTikTokHook(sender) {
+  try {
+    const tabId = sender?.tab?.id;
+    if (!tabId) {
+      return { success: false, error: 'Missing tab id' };
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        if (window.__ctTikTokHookInstalled) return;
+        window.__ctTikTokHookInstalled = true;
+
+        const shouldInspectUrl = (url) => {
+          if (!url || typeof url !== 'string') return false;
+          return url.includes('api/recommend') ||
+            url.includes('item_list') ||
+            url.includes('feed') ||
+            url.includes('aweme') ||
+            url.includes('mcs-sg.tiktokv.com') ||
+            url.includes('/v1/list') ||
+            url.includes('webcast.tiktok.com/webcast/feed');
+        };
+
+        const extractItems = (data) => {
+          if (!data || typeof data !== 'object') return [];
+          const list = data.itemList || data.item_list || data.aweme_list || data.itemListData || data.data?.item_list || data.data?.itemList;
+          if (!Array.isArray(list)) return [];
+          return list.map(item => {
+            const id = item?.id || item?.aweme_id || item?.itemId;
+            const desc = item?.desc || item?.description || item?.title;
+            const author = item?.author?.uniqueId || item?.author?.unique_id || item?.author?.nickname || item?.author?.authorName || item?.authorName;
+            const shareUrl = item?.shareInfo?.share_url || item?.shareInfo?.shareUrl || item?.shareMeta?.share_url || item?.shareMeta?.shareUrl || item?.share_url || item?.shareUrl;
+            if (!id || !author) return null;
+            return {
+              id: String(id),
+              author: String(author),
+              desc: desc ? String(desc) : '',
+              shareUrl: shareUrl ? String(shareUrl) : ''
+            };
+          }).filter(Boolean);
+        };
+
+        const postItems = (items) => {
+          if (!Array.isArray(items) || items.length === 0) return;
+          window.postMessage({ type: 'CT_TIKTOK_FEED', items }, '*');
+          try {
+            console.log('ct:tiktok hook posted items', items.slice(0, 2));
+          } catch (error) {
+            // ignore
+          }
+        };
+
+        const originalFetch = window.fetch;
+        if (typeof originalFetch === 'function') {
+          window.fetch = async function (...args) {
+            const response = await originalFetch.apply(this, args);
+            try {
+              const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+              if (shouldInspectUrl(url)) {
+                const clone = response.clone();
+                const contentType = clone.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                  clone.json().then((data) => postItems(extractItems(data))).catch(() => {});
+                } else {
+                  clone.text().then((text) => {
+                    try {
+                      postItems(extractItems(JSON.parse(text)));
+                    } catch (error) {
+                      // ignore
+                    }
+                  }).catch(() => {});
+                }
+              }
+            } catch (error) {
+              // ignore
+            }
+            return response;
+          };
+        }
+
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+          this.__ctTikTokUrl = url;
+          return originalOpen.call(this, method, url, ...rest);
+        };
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function (...args) {
+          this.addEventListener('load', function () {
+            try {
+              const url = this.__ctTikTokUrl;
+              if (!shouldInspectUrl(url)) return;
+              const text = this.responseText;
+              if (!text) return;
+              postItems(extractItems(JSON.parse(text)));
+            } catch (error) {
+              // ignore
+            }
+          });
+          return originalSend.apply(this, args);
+        };
+      }
+    });
+    return { success: true };
+  } catch (error) {
+    console.warn('Failed to inject TikTok hook:', error);
     return { success: false, error: error.message };
   }
 }
@@ -554,6 +667,8 @@ function isLikelyProfileImage(url) {
   const lower = url.toLowerCase();
   return lower.includes('profile') ||
     lower.includes('avatar') ||
+    lower.includes('aweme-avatar') ||
+    lower.includes('tiktokcdn.com/aweme') ||
     lower.includes('s150x150') ||
     lower.includes('s320x320');
 }

@@ -2,7 +2,9 @@
 const TikTokSelectors = {
   // Post/video containers
   POST_CONTAINER: [
+    'article[data-e2e="recommend-list-item-container"]',
     'div[data-e2e="recommend-list-item-container"]',
+    'article[class*="ArticleItemContainer"]',
     'div.DivItemContainerV2',
     'div[class*="DivItemContainer"]'
   ],
