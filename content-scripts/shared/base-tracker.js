@@ -58,6 +58,7 @@ class BasePlatformTracker {
     };
     this.autoScrollOverlay = null;
     this.autoScrollInterruptHandler = null;
+    this.autoScrollContainer = null;
     this.savedStatusCache = new Map();
     this.currentIndicator = null;
     this.currentIndicatorPost = null;
@@ -387,6 +388,7 @@ class BasePlatformTracker {
       return { started: false, reason: 'already_running' };
     }
 
+    this.autoScrollContainer = this.getScrollContainer(true);
     this.autoScrollState.running = true;
     this.autoScrollState.paused = false;
     this.autoScrollState.stopped = false;
@@ -456,10 +458,12 @@ class BasePlatformTracker {
         break;
       }
 
-      const beforeHeight = this.getScrollHeight();
+      const scrollContainer = this.getScrollContainer();
+      const beforeHeight = this.getScrollHeight(scrollContainer);
+      const beforeTop = this.getScrollTop(scrollContainer);
       const stepRatio = this.randomBetween(0.45, 0.85);
       const stepSize = Math.max(200, Math.floor(window.innerHeight * stepRatio));
-      window.scrollBy(0, stepSize);
+      this.scrollByAmount(scrollContainer, stepSize);
 
       const stepDelay = this.randomBetween(800, 2500);
       await new Promise(resolve => setTimeout(resolve, stepDelay));
@@ -474,8 +478,9 @@ class BasePlatformTracker {
         await this.incrementDailyAutoScrollCount(captured);
       }
 
-      const afterHeight = this.getScrollHeight();
-      if (afterHeight <= beforeHeight + 10) {
+      const afterHeight = this.getScrollHeight(scrollContainer);
+      const afterTop = this.getScrollTop(scrollContainer);
+      if (afterHeight <= beforeHeight + 10 && afterTop <= beforeTop + 5) {
         this.autoScrollState.noGrowthStreak += 1;
       } else {
         this.autoScrollState.noGrowthStreak = 0;
@@ -568,11 +573,101 @@ class BasePlatformTracker {
     });
   }
 
-  getScrollHeight() {
-    return Math.max(
-      document.documentElement.scrollHeight || 0,
-      document.body?.scrollHeight || 0
-    );
+  getScrollContainer(forceRefresh = false) {
+    if (this.autoScrollContainer && !forceRefresh && document.contains(this.autoScrollContainer)) {
+      return this.autoScrollContainer;
+    }
+
+    const candidates = [];
+    const isScrollableElement = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      const overflowY = style.overflowY || '';
+      const hasScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+      const clientHeight = el.clientHeight || 0;
+      const scrollHeight = el.scrollHeight || 0;
+      const hasSize = clientHeight >= 200;
+      const contentTaller = scrollHeight - clientHeight > 10;
+      return hasSize && (contentTaller || hasScroll);
+    };
+
+    const addIfScrollable = (el) => {
+      if (!el) return;
+      if (isScrollableElement(el)) {
+        candidates.push(el);
+      }
+    };
+
+    if (typeof this.getScrollContainerOverride === 'function') {
+      const override = this.getScrollContainerOverride();
+      if (override && isScrollableElement(override)) {
+        this.autoScrollContainer = override;
+        return this.autoScrollContainer;
+      }
+    }
+
+    addIfScrollable(document.scrollingElement);
+    addIfScrollable(document.documentElement);
+    addIfScrollable(document.body);
+
+    const selector = [
+      'main',
+      '[role="main"]',
+      '[role="feed"]',
+      '[data-testid="primaryColumn"]',
+      '[aria-label*="Timeline"]',
+      '[aria-label*="Saved"]',
+      '[aria-label*="Liked"]',
+      '[data-e2e*="favorite"]',
+      '[data-e2e*="liked"]'
+    ].join(',');
+
+    document.querySelectorAll(selector).forEach(el => addIfScrollable(el));
+
+    const best = candidates.reduce((acc, el) => {
+      const score = (el.scrollHeight || 0) - (el.clientHeight || 0);
+      if (!acc) return el;
+      const accScore = (acc.scrollHeight || 0) - (acc.clientHeight || 0);
+      return score > accScore ? el : acc;
+    }, null);
+
+    this.autoScrollContainer = best || document.scrollingElement || document.documentElement || document.body;
+    return this.autoScrollContainer;
+  }
+
+  getScrollHeight(container = this.getScrollContainer()) {
+    if (!container) return 0;
+    if (container === document.body || container === document.documentElement || container === document.scrollingElement) {
+      return Math.max(
+        document.documentElement.scrollHeight || 0,
+        document.body?.scrollHeight || 0
+      );
+    }
+    return container.scrollHeight || 0;
+  }
+
+  getScrollTop(container = this.getScrollContainer()) {
+    if (!container) return 0;
+    if (container === document.body || container === document.documentElement || container === document.scrollingElement) {
+      return window.scrollY || document.documentElement.scrollTop || document.body?.scrollTop || 0;
+    }
+    return container.scrollTop || 0;
+  }
+
+  scrollByAmount(container, amount) {
+    if (!container) {
+      window.scrollBy(0, amount);
+      return;
+    }
+    if (container === document.body || container === document.documentElement || container === document.scrollingElement) {
+      window.scrollBy(0, amount);
+      return;
+    }
+    if (typeof container.scrollBy === 'function') {
+      container.scrollBy(0, amount);
+      return;
+    }
+    container.scrollTop = (container.scrollTop || 0) + amount;
   }
 
   ensureAutoScrollOverlay() {

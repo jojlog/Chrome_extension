@@ -401,6 +401,22 @@ class TwitterTracker extends BasePlatformTracker {
 
     return null;
   }
+
+  getScrollContainerOverride() {
+    const candidates = [
+      '[data-testid="primaryColumn"]',
+      'main[role="main"]',
+      '[role="main"]',
+      '[aria-label*="Timeline"]',
+      'section[aria-label*="Timeline"]'
+    ];
+
+    for (const selector of candidates) {
+      const el = document.querySelector(selector);
+      if (el) return el;
+    }
+    return null;
+  }
 }
 
 // Initialize tracker when script loads
