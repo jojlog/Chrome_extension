@@ -642,6 +642,24 @@ class TikTokTracker extends BasePlatformTracker {
     }
     return null;
   }
+
+  getScrollContainerOverride() {
+    const candidates = [
+      '[data-e2e="user-profile"]',
+      '[data-e2e="favorites"]',
+      '[data-e2e="liked"]',
+      '[data-e2e="user-post-item-list"]',
+      '[data-e2e="search-result-list"]',
+      'main[role="main"]',
+      '[role="main"]'
+    ];
+
+    for (const selector of candidates) {
+      const el = document.querySelector(selector);
+      if (el) return el;
+    }
+    return null;
+  }
 }
 
 if (document.readyState === 'loading') {

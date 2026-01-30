@@ -387,15 +387,22 @@ class TwitterTracker extends BasePlatformTracker {
    * @returns {string|null} 'bookmarks', 'likes', or null
    */
   detectPageMode() {
-    const url = window.location.href;
+    let pathname = '';
+    try {
+      pathname = new URL(window.location.href).pathname || '';
+    } catch (error) {
+      pathname = window.location.pathname || '';
+    }
+
+    const normalizedPath = pathname.replace(/\/+$/, '');
 
     // Twitter bookmarks: x.com/i/bookmarks or twitter.com/i/bookmarks
-    if (url.includes('/i/bookmarks')) {
+    if (normalizedPath === '/i/bookmarks' || normalizedPath.startsWith('/i/bookmarks/')) {
       return 'bookmarks';
     }
 
-    // Twitter likes: x.com/{username}/likes
-    if (url.match(/\/([\w]+)\/likes\/?$/)) {
+    // Twitter likes: x.com/{username}/likes (ignore query string)
+    if (normalizedPath.match(/^\/[^/]+\/likes(?:\/|$)/)) {
       return 'likes';
     }
 
