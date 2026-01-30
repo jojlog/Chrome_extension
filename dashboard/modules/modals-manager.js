@@ -262,6 +262,10 @@ export class ModalsManager {
     addCategoryTag(container, name) {
         // Check duplicates
         if ([...container.children].some(el => el.dataset.val === name)) return;
+        if (container.children.length >= 3) {
+            alert('Each item can have up to 3 categories.');
+            return;
+        }
 
         const span = document.createElement('span');
         span.className = 'category-tag editable';

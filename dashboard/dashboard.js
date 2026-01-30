@@ -508,13 +508,14 @@ class DashboardManager {
 
   async updateItemCategories(id, categories) {
     try {
+      const cappedCategories = Array.isArray(categories) ? Array.from(new Set(categories)).slice(0, 3) : categories;
       // Optimistic update
       const itemIndex = this.allItems.findIndex(i => i.id === id);
       if (itemIndex !== -1) {
-        this.allItems[itemIndex].categories = categories;
+        this.allItems[itemIndex].categories = cappedCategories;
         this.itemsById.set(id, this.allItems[itemIndex]);
         // If AI failed before, manual update resolves it
-        if (categories.length > 0 && categories[0] !== 'Uncategorized') {
+        if (Array.isArray(cappedCategories) && cappedCategories.length > 0 && cappedCategories[0] !== 'Uncategorized') {
           // We keep aiProcessed=true but clear failure reason effectively by it being manual
         }
         this.filterAndDisplayContent();
@@ -523,7 +524,7 @@ class DashboardManager {
       const response = await chrome.runtime.sendMessage({
         type: 'UPDATE_INTERACTION',
         id,
-        updates: { categories }
+        updates: { categories: cappedCategories }
       });
 
       if (!response || !response.success) {
@@ -1925,6 +1926,7 @@ class DashboardManager {
 
   async bulkUpdateCategories(itemIds, categories, mode = 'replace') {
     const updates = [];
+    const cappedCategories = Array.isArray(categories) ? Array.from(new Set(categories)).slice(0, 3) : categories;
 
     for (const id of itemIds) {
       const item = this.itemsById.get(id);
@@ -1932,10 +1934,10 @@ class DashboardManager {
 
       let newCategories;
       if (mode === 'replace') {
-        newCategories = [...categories];
+        newCategories = Array.isArray(cappedCategories) ? [...cappedCategories] : [];
       } else if (mode === 'add') {
         const existing = (item.categories || []).filter(c => c !== 'Uncategorized');
-        newCategories = [...new Set([...existing, ...categories])];
+        newCategories = [...new Set([...existing, ...(Array.isArray(cappedCategories) ? cappedCategories : [])])].slice(0, 3);
       }
 
       updates.push({ id, categories: newCategories });
