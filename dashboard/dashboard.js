@@ -66,6 +66,7 @@ class DashboardManager {
 
     // Setup listeners
     this.setupEventListeners();
+    this.updateViewToggleLabel();
     this.exposeDebugHelpers();
 
     // Check URL hash for direct actions
@@ -481,9 +482,15 @@ class DashboardManager {
     this.filterAndDisplayContent();
   }
 
+  updateViewToggleLabel() {
+    const toggle = document.getElementById('view-toggle');
+    if (!toggle) return;
+    toggle.textContent = this.viewMode === 'grid' ? 'List View' : 'Grid View';
+  }
+
   toggleViewMode() {
     this.viewMode = this.viewMode === 'grid' ? 'list' : 'grid';
-    document.getElementById('view-toggle').textContent = this.viewMode === 'grid' ? 'List View' : 'Grid View';
+    this.updateViewToggleLabel();
     this.filterAndDisplayContent();
   }
 
