@@ -248,7 +248,7 @@ body::before {
 
 .platform-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 8px;
 }
 
@@ -283,6 +283,10 @@ body::before {
   background: #1a93e0;
 }
 
+.platform-icon.threads {
+  background: #111111;
+}
+
 .platform-icon.linkedin {
   background: #0077b5;
 }
@@ -301,6 +305,10 @@ body::before {
 
 .platform-icon.twitter::before {
   content: 'X';
+}
+
+.platform-icon.threads::before {
+  content: 'TH';
 }
 
 .platform-icon.linkedin::before {
@@ -397,6 +405,10 @@ body::before {
 
 .platform-badge.tiktok {
   background: #111111;
+}
+
+.platform-badge.threads {
+  background: #101010;
 }
 
 .recent-item-date {

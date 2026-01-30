@@ -294,6 +294,15 @@ class ContentExtractor {
         parsed.pathname = parsed.pathname
           .replace(/\/liked_by\/?$/i, '/')
           .replace(/\/comments\/?$/i, '/');
+      } else if (platform === 'threads' && (hostname.endsWith('threads.net') || hostname.endsWith('threads.com') || hostname.endsWith('instagram.com'))) {
+        if (hostname.endsWith('threads.net') || hostname.endsWith('threads.com')) {
+          parsed.hostname = 'threads.net';
+        }
+        const postMatch = parsed.pathname.match(/\/(@[^\/]+)\/post\/([^\/]+)/i);
+        if (postMatch && postMatch[1] && postMatch[2]) {
+          parsed.pathname = `/${postMatch[1].toLowerCase()}/post/${postMatch[2]}`;
+        }
+        parsed.pathname = parsed.pathname.replace(/\/+$/, '');
       } else {
         parsed.hostname = hostname;
       }

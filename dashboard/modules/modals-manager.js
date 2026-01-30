@@ -45,6 +45,7 @@ export class ModalsManager {
         // Platforms
         if (settings.enabledPlatforms) {
             document.getElementById('enable-instagram').checked = settings.enabledPlatforms.instagram !== false;
+            document.getElementById('enable-threads').checked = settings.enabledPlatforms.threads !== false;
             document.getElementById('enable-twitter').checked = settings.enabledPlatforms.twitter !== false;
             document.getElementById('enable-linkedin').checked = settings.enabledPlatforms.linkedin !== false;
             document.getElementById('enable-tiktok').checked = settings.enabledPlatforms.tiktok !== false;
@@ -84,6 +85,7 @@ export class ModalsManager {
             autoSaveTimeThreshold: parseInt(document.getElementById('time-threshold').value) * 1000,
             enabledPlatforms: {
                 instagram: document.getElementById('enable-instagram').checked,
+                threads: document.getElementById('enable-threads').checked,
                 twitter: document.getElementById('enable-twitter').checked,
                 linkedin: document.getElementById('enable-linkedin').checked,
                 tiktok: document.getElementById('enable-tiktok').checked

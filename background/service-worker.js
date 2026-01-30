@@ -28,7 +28,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('assets/icons/icon128.png'),
       title: 'Social Media Content Tracker Installed!',
-      message: 'Start browsing Instagram, Twitter, LinkedIn, or TikTok. Your interactions will be automatically tracked.',
+      message: 'Start browsing Instagram, Threads, Twitter, LinkedIn, or TikTok. Your interactions will be automatically tracked.',
       priority: 2
     });
 

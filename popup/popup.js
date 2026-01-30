@@ -76,6 +76,7 @@ class PopupManager {
 
         // Update platform stats
         document.getElementById('instagram-count').textContent = stats.byPlatform.instagram || 0;
+        document.getElementById('threads-count').textContent = stats.byPlatform.threads || 0;
         document.getElementById('twitter-count').textContent = stats.byPlatform.twitter || 0;
         document.getElementById('linkedin-count').textContent = stats.byPlatform.linkedin || 0;
         document.getElementById('tiktok-count').textContent = stats.byPlatform.tiktok || 0;
@@ -157,7 +158,7 @@ class PopupManager {
 
     if (!supported) {
       if (autoImportEnabled && !autoImportPaused) {
-        context = 'Open Instagram, X, LinkedIn, or TikTok to import saved content.';
+        context = 'Open Instagram, Threads, X, LinkedIn, or TikTok to import saved content.';
       } else if (!autoImportEnabled) {
         context = 'Open a supported site to see auto-import status.';
       }
@@ -232,6 +233,8 @@ class PopupManager {
       const host = parsed.hostname.replace(/^www\\./, '');
       return [
         'instagram.com',
+        'threads.net',
+        'threads.com',
         'x.com',
         'twitter.com',
         'linkedin.com',

@@ -496,7 +496,10 @@ class InstagramTracker extends BasePlatformTracker {
 }
 
 // Initialize tracker when script loads
-if (document.readyState === 'loading') {
+const shouldSkipForThreads = window.location.pathname?.startsWith('/threads');
+if (shouldSkipForThreads) {
+  console.log('Instagram tracker skipped on /threads path');
+} else if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', () => {
     new InstagramTracker();
   });
