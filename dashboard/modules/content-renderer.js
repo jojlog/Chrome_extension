@@ -201,6 +201,12 @@ export class ContentRenderer {
         // Add checkbox for selection mode
         const checkbox = document.createElement('div');
         checkbox.className = 'card-checkbox';
+        checkbox.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (selectMode) {
+                this.dashboardManager.toggleItemSelection(item.id);
+            }
+        });
         card.appendChild(checkbox);
 
         // Header: Platform icon + Date + Actions
@@ -271,7 +277,9 @@ export class ContentRenderer {
         metaInfo.appendChild(dateSpan);
 
         actions.appendChild(editBtn);
-        actions.appendChild(deleteBtn);
+        if (!selectMode) {
+            actions.appendChild(deleteBtn);
+        }
 
         header.appendChild(platformBadge);
         header.appendChild(metaInfo);
