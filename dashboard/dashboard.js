@@ -51,6 +51,7 @@ class DashboardManager {
     // Bulk selection mode
     this.selectMode = false;
     this.selectedItems = new Set();
+    this.lastRenderedItems = [];
 
     this.init();
   }
@@ -215,6 +216,7 @@ class DashboardManager {
 
     // Sort
     const sorted = this.filtersManager.sortContent(filtered, this.currentFilters.sort);
+    this.lastRenderedItems = sorted;
 
     // Render (pass selectMode and selectedItems)
     this.contentRenderer.renderContent(sorted, this.viewMode, this.selectMode, this.selectedItems);
@@ -1797,6 +1799,10 @@ class DashboardManager {
     document.getElementById('cancel-selection')?.addEventListener('click', () => {
       this.exitSelectMode();
     });
+
+    document.getElementById('select-all')?.addEventListener('click', () => {
+      this.toggleSelectAll();
+    });
   }
 
   // --- Bulk Selection Methods ---
@@ -1834,6 +1840,43 @@ class DashboardManager {
     this.filterAndDisplayContent();
   }
 
+  getVisibleItemIds() {
+    if (!Array.isArray(this.lastRenderedItems)) return [];
+    return this.lastRenderedItems.map(item => item.id).filter(Boolean);
+  }
+
+  areAllVisibleSelected() {
+    const visibleIds = this.getVisibleItemIds();
+    if (visibleIds.length === 0) return false;
+    return visibleIds.every(id => this.selectedItems.has(id));
+  }
+
+  toggleSelectAll() {
+    if (!this.selectMode) return;
+    const visibleIds = this.getVisibleItemIds();
+    if (visibleIds.length === 0) return;
+    const visibleSet = new Set(visibleIds);
+
+    const shouldSelect = !this.areAllVisibleSelected();
+    visibleIds.forEach(id => {
+      if (shouldSelect) {
+        this.selectedItems.add(id);
+      } else {
+        this.selectedItems.delete(id);
+      }
+    });
+
+    document.querySelectorAll('.content-card[data-id]').forEach(card => {
+      const id = card.dataset.id;
+      if (!id) return;
+      if (visibleSet.has(id)) {
+        card.classList.toggle('selected', this.selectedItems.has(id));
+      }
+    });
+
+    this.updateSelectionBar();
+  }
+
   toggleItemSelection(itemId) {
     if (this.selectedItems.has(itemId)) {
       this.selectedItems.delete(itemId);
@@ -1851,12 +1894,19 @@ class DashboardManager {
   updateSelectionBar() {
     const selectionBar = document.getElementById('selection-bar');
     const countEl = document.getElementById('selection-count');
+    const selectAllBtn = document.getElementById('select-all');
 
-    if (this.selectedItems.size > 0) {
+    if (this.selectMode) {
       selectionBar?.classList.remove('hidden');
       if (countEl) countEl.textContent = this.selectedItems.size;
     } else {
       selectionBar?.classList.add('hidden');
+    }
+
+    if (selectAllBtn) {
+      const allSelected = this.areAllVisibleSelected();
+      selectAllBtn.textContent = allSelected ? 'Deselect All' : 'Select All';
+      selectAllBtn.disabled = this.getVisibleItemIds().length === 0;
     }
   }
 
