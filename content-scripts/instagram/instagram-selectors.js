@@ -13,8 +13,24 @@ const InstagramSelectors = {
   SAVED_GRID_ITEM: [
     'div[role="main"] article a[href*="/p/"]',
     'div[role="main"] article a[href*="/reel/"]',
+    'div[role="main"] article a[href*="/reels/"]',
+    'div[role="main"] article a[href*="/tv/"]',
     'div[role="main"] a[href*="/p/"]',
-    'div[role="main"] a[href*="/reel/"]'
+    'div[role="main"] a[href*="/reel/"]',
+    'div[role="main"] a[href*="/reels/"]',
+    'div[role="main"] a[href*="/tv/"]',
+    'main article a[href*="/p/"]',
+    'main article a[href*="/reel/"]',
+    'main article a[href*="/reels/"]',
+    'main article a[href*="/tv/"]',
+    'main a[href*="/p/"]',
+    'main a[href*="/reel/"]',
+    'main a[href*="/reels/"]',
+    'main a[href*="/tv/"]',
+    'a[href*="/p/"]',
+    'a[href*="/reel/"]',
+    'a[href*="/reels/"]',
+    'a[href*="/tv/"]'
   ],
 
   SAVED_GRID_LINK: [

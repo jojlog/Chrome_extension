@@ -14,7 +14,26 @@ const TikTokSelectors = {
     'div[data-e2e="user-post-item"]',
     'div[data-e2e="user-liked-item"]',
     'div[data-e2e="user-favorite-item"]',
+    'div[data-e2e="user-favourite-item"]',
+    'div[data-e2e*="user-liked-item"]',
+    'div[data-e2e*="user-favorite-item"]',
+    'div[data-e2e*="user-favourite-item"]',
+    'div[data-e2e*="user-post-item"]',
+    'a[data-e2e*="user-liked-item"]',
+    'a[data-e2e*="user-favorite-item"]',
+    'a[data-e2e*="user-favourite-item"]',
     'a[href*="/video/"]'
+  ],
+
+  PROFILE_GRID_ROOT: [
+    '[data-e2e="user-post-item-list"]',
+    '[data-e2e="user-liked-item-list"]',
+    '[data-e2e="user-favorite-item-list"]',
+    '[data-e2e="user-favourite-item-list"]',
+    '[data-e2e*="user-post-item-list"]',
+    '[data-e2e*="user-liked-item-list"]',
+    '[data-e2e*="user-favorite-item-list"]',
+    '[data-e2e*="user-favourite-item-list"]'
   ],
 
   PROFILE_GRID_LINK: [

@@ -1097,14 +1097,15 @@ class BasePlatformTracker {
     for (const post of posts) {
       try {
         if (!this.isElementVisible(post)) continue;
-        const postId = this.generatePostId(post);
+        const snapshot = this.buildImportSnapshot(post);
+        const dedupKey = snapshot?.contentKey || this.generatePostId(post);
 
         // Skip if already captured
-        if (this.capturedPostIds.has(postId)) continue;
-        this.capturedPostIds.add(postId);
+        if (this.capturedPostIds.has(dedupKey)) continue;
+        this.capturedPostIds.add(dedupKey);
 
         // Capture the post
-        const saved = await this.captureImportedInteraction(interactionType, post);
+        const saved = await this.captureImportedInteraction(interactionType, post, snapshot);
         if (saved) {
           capturedCount++;
         }
@@ -1135,20 +1136,62 @@ class BasePlatformTracker {
     return capturedCount;
   }
 
+  buildImportSnapshot(postElement) {
+    try {
+      const content = this.extractContent(postElement);
+      const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+      if (normalizedUrl) {
+        content.url = normalizedUrl;
+      }
+      const metadata = this.extractMetadata(postElement);
+      const loggedInUser = this.extractLoggedInUser();
+      const cleanedText = ContentExtractor.cleanText(content.text || '').slice(0, 200);
+      const locationKey = ContentExtractor.normalizeUrlForKey(window.location.href, this.platform);
+      let contentKey = '';
+      if (normalizedUrl && normalizedUrl !== locationKey) {
+        contentKey = `${this.platform}:${normalizedUrl}`;
+      } else if (content.imageUrls && content.imageUrls.length > 0) {
+        const rawImage = content.imageUrls.find(Boolean) || '';
+        let imageKey = rawImage;
+        try {
+          const parsed = new URL(rawImage, window.location.href);
+          parsed.search = '';
+          parsed.hash = '';
+          imageKey = `${parsed.origin}${parsed.pathname}`;
+        } catch (error) {
+          imageKey = rawImage;
+        }
+        if (imageKey) {
+          contentKey = `${this.platform}:img:${ContentExtractor.hashString(imageKey)}`;
+        }
+      } else if (cleanedText) {
+        contentKey = `${this.platform}:text:${ContentExtractor.hashString(cleanedText)}`;
+      }
+      return {
+        content,
+        metadata,
+        loggedInUser,
+        contentKey
+      };
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to build import snapshot`, error);
+      return null;
+    }
+  }
+
   /**
    * Capture an imported interaction (from saved/liked page)
    * @param {string} type - Interaction type
    * @param {HTMLElement} postElement - Post element
+   * @param {Object|null} snapshot - Optional precomputed snapshot
    */
-  async captureImportedInteraction(type, postElement) {
-    const content = this.extractContent(postElement);
-    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
-    if (normalizedUrl) {
-      content.url = normalizedUrl;
-    }
-    const metadata = this.extractMetadata(postElement);
-    const loggedInUser = this.extractLoggedInUser();
-    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+  async captureImportedInteraction(type, postElement, snapshot = null) {
+    const data = snapshot || this.buildImportSnapshot(postElement) || {};
+    const content = data.content || {};
+    const metadata = data.metadata || {};
+    const loggedInUser = data.loggedInUser || null;
+    const hasSnapshotKey = Object.prototype.hasOwnProperty.call(data, 'contentKey');
+    const contentKey = hasSnapshotKey ? data.contentKey : ContentExtractor.createContentKey(this.platform, content.url, content.text);
 
     const interaction = {
       id: ContentExtractor.generatePostId(this.platform, content.url, content.text),
@@ -1190,7 +1233,18 @@ class BasePlatformTracker {
     if (!element) return false;
     const rect = element.getBoundingClientRect();
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-    return rect.bottom > 0 && rect.top < viewportHeight;
+    const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+    const inView = rect.bottom > 0 && rect.top < viewportHeight && rect.right > 0 && rect.left < viewportWidth;
+    if (inView && rect.width > 1 && rect.height > 1) {
+      return true;
+    }
+
+    const child = element.querySelector?.('img, video, picture img, canvas, svg, div, span');
+    if (!child) return false;
+    const childRect = child.getBoundingClientRect();
+    const childInView = childRect.bottom > 0 && childRect.top < viewportHeight &&
+      childRect.right > 0 && childRect.left < viewportWidth;
+    return childInView && childRect.width > 1 && childRect.height > 1;
   }
 
 

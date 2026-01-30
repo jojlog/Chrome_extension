@@ -73,6 +73,77 @@ class InstagramTracker extends BasePlatformTracker {
     return InstagramSelectors.POST_CONTAINER;
   }
 
+  getSavedGridPosts() {
+    const selectors = InstagramSelectors.SAVED_GRID_ITEM || [];
+    if (selectors.length === 0) return [];
+
+    const root = document.querySelector('main') || document.querySelector('div[role="main"]');
+    const collected = new Set();
+    for (const selector of selectors) {
+      try {
+        document.querySelectorAll(selector).forEach(el => {
+          if (!root || root.contains(el)) {
+            collected.add(el);
+          }
+        });
+      } catch (error) {
+        console.warn('Invalid selector:', selector);
+      }
+    }
+    return Array.from(collected);
+  }
+
+  async bulkCaptureVisiblePosts(options = {}) {
+    if (this.pageMode !== 'saved') {
+      return await super.bulkCaptureVisiblePosts(options);
+    }
+
+    const force = options.force === true;
+    const suppressSummary = options.suppressSummary === true;
+    if (!force && !this.shouldAutoImport()) return 0;
+    this.cancelBulkCapture();
+
+    const posts = this.getSavedGridPosts();
+    if (!posts || posts.length === 0) return 0;
+
+    let capturedCount = 0;
+    const interactionType = this.getInteractionTypeForPageMode();
+
+    for (const post of posts) {
+      try {
+        if (!this.isElementVisible(post)) continue;
+        const snapshot = this.buildImportSnapshot(post);
+        const dedupKey = snapshot?.contentKey || this.generatePostId(post);
+        if (this.capturedPostIds.has(dedupKey)) continue;
+        this.capturedPostIds.add(dedupKey);
+
+        const saved = await this.captureImportedInteraction(interactionType, post, snapshot);
+        if (saved) {
+          capturedCount++;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 100));
+      } catch (error) {
+        console.error(`${this.platform}: Error capturing post:`, error);
+      }
+    }
+
+    if (capturedCount > 0 && !suppressSummary && !this.settings?.suppressImportNotifications) {
+      if (window.statusPopupManager) {
+        window.statusPopupManager.show({
+          success: true,
+          saveSuccess: true,
+          interactionType: `${capturedCount} ${this.pageMode}`,
+          platform: this.platform,
+          categories: ['Imported'],
+          aiProcessed: false
+        });
+      }
+    }
+
+    return capturedCount;
+  }
+
   /**
    * Check if element is a retweet button (Instagram doesn't have retweets)
    * @param {HTMLElement} element - Element to check
@@ -409,8 +480,15 @@ class InstagramTracker extends BasePlatformTracker {
    * @returns {string|null} 'saved' or null
    */
   detectPageMode() {
-    const path = window.location.pathname;
-    if (path.match(/^\/[^\/]+\/saved\/?$/)) {
+    let pathname = '';
+    try {
+      pathname = new URL(window.location.href).pathname || '';
+    } catch (error) {
+      pathname = window.location.pathname || '';
+    }
+
+    const normalizedPath = pathname.replace(/\/+$/, '');
+    if (normalizedPath.match(/^\/[^/]+\/saved(?:\/|$)/)) {
       return 'saved';
     }
     return null;
