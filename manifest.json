@@ -21,6 +21,7 @@
     "https://x.com/*",
     "https://www.linkedin.com/*",
     "https://www.tiktok.com/*",
+    "https://www.youtube.com/*",
     "https://www.threads.net/*",
     "https://threads.net/*",
     "https://www.threads.com/*",
@@ -119,6 +120,23 @@
         "content-scripts/shared/base-tracker.js",
         "content-scripts/threads/threads-selectors.js",
         "content-scripts/threads/threads-tracker.js"
+      ],
+      "css": [
+        "content-scripts/shared/status-popup.css",
+        "content-scripts/shared/content-indicator.css",
+        "content-scripts/shared/auto-scroll-overlay.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": [
+        "content-scripts/shared/status-popup.js",
+        "content-scripts/shared/time-tracker.js",
+        "content-scripts/shared/content-extractor.js",
+        "content-scripts/shared/base-tracker.js",
+        "content-scripts/youtube/youtube-selectors.js",
+        "content-scripts/youtube/youtube-tracker.js"
       ],
       "css": [
         "content-scripts/shared/status-popup.css",

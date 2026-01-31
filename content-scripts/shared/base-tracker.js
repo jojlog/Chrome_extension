@@ -1069,7 +1069,8 @@ class BasePlatformTracker {
       'bookmarks': 'imported_bookmark',
       'likes': 'imported_like',
       'saved': 'imported_save',
-      'favorites': 'imported_save'
+      'favorites': 'imported_save',
+      'watch_later': 'imported_save'
     };
     return modeMap[this.pageMode] || 'imported_save';
   }

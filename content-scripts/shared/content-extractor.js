@@ -303,6 +303,33 @@ class ContentExtractor {
           parsed.pathname = `/${postMatch[1].toLowerCase()}/post/${postMatch[2]}`;
         }
         parsed.pathname = parsed.pathname.replace(/\/+$/, '');
+      } else if (platform === 'youtube' && hostname.endsWith('youtube.com')) {
+        const t = parsed.searchParams.get('t') || '';
+        parsed.searchParams.delete('t');
+        parsed.searchParams.delete('start');
+        parsed.searchParams.delete('pp');
+        parsed.searchParams.delete('si');
+        parsed.searchParams.delete('feature');
+        parsed.searchParams.delete('ab_channel');
+        parsed.searchParams.delete('list');
+        parsed.searchParams.delete('index');
+        parsed.searchParams.delete('utm_source');
+        parsed.searchParams.delete('utm_medium');
+        parsed.searchParams.delete('utm_campaign');
+
+        if (parsed.pathname.startsWith('/watch')) {
+          const videoId = parsed.searchParams.get('v');
+          parsed.search = '';
+          if (videoId) {
+            parsed.search = `?v=${videoId}`;
+          }
+        } else if (parsed.pathname.startsWith('/shorts/')) {
+          parsed.search = '';
+        }
+        if (t) {
+          // time-based shares shouldn't create unique keys
+          parsed.hash = '';
+        }
       } else {
         parsed.hostname = hostname;
       }

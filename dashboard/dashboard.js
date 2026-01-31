@@ -99,26 +99,48 @@ class DashboardManager {
     if (loadingEl) loadingEl.style.display = 'block';
 
     try {
-      // Load all interactions
-      const response = await chrome.runtime.sendMessage({ type: 'GET_INTERACTIONS' });
-
-      if (response && response.success) {
-        this.allItems = response.data;
-        this.itemsById = new Map(this.allItems.map(item => [item.id, item]));
-        this.aiTokenCache = new Map();
-        this.aiSuggestedItems = [];
-        this.aiSuggestedScoreMap = new Map();
-        this.cleanupInstagramUrls();
-        this.loadCategoriesFromContent();
-        this.updateCategorySuggestionBar();
-        this.filterAndDisplayContent();
-      } else {
-        console.error('Failed to load content:', response?.error);
+      let interactions = null;
+      // Load all interactions via service worker
+      try {
+        const response = await this.sendRuntimeMessageWithTimeout({ type: 'GET_INTERACTIONS' }, 1500);
+        if (response && response.success) {
+          interactions = response.data;
+        } else {
+          console.error('Failed to load content:', response?.error);
+        }
+      } catch (error) {
+        console.warn('Service worker unavailable, falling back to local storage:', error);
       }
+
+      if (!interactions) {
+        const fallback = await chrome.storage.local.get('interactions');
+        interactions = fallback?.interactions || [];
+      }
+
+      this.allItems = interactions;
+      this.itemsById = new Map(this.allItems.map(item => [item.id, item]));
+      this.aiTokenCache = new Map();
+      this.aiSuggestedItems = [];
+      this.aiSuggestedScoreMap = new Map();
+      this.cleanupInstagramUrls();
+      this.loadCategoriesFromContent();
+      this.updateCategorySuggestionBar();
+      this.filterAndDisplayContent();
     } catch (error) {
       console.error('Error loading content:', error);
     } finally {
       if (loadingEl) loadingEl.style.display = 'none';
+    }
+  }
+
+  async sendRuntimeMessageWithTimeout(message, timeoutMs = 1500) {
+    const timeoutPromise = new Promise((_resolve, reject) => {
+      setTimeout(() => reject(new Error('Runtime message timeout')), timeoutMs);
+    });
+    try {
+      return await Promise.race([chrome.runtime.sendMessage(message), timeoutPromise]);
+    } catch (error) {
+      throw error;
     }
   }
 
@@ -1414,7 +1436,15 @@ class DashboardManager {
   getDisplayText(item) {
     if (!item || !item.content) return '';
     const text = (item.content.text || '').trim();
-    if (!text) return '';
+    const captions = (item.content.captions || '').trim();
+    const hasMedia = !!item.content.previewDataUrl || (Array.isArray(item.content.imageUrls) && item.content.imageUrls.length > 0) || !!item.content.videoUrl;
+
+    if (!text) {
+      if (!hasMedia && !captions) return 'NO IMAGE';
+      if (captions) return captions;
+      return '';
+    }
+
     if (item.platform !== 'instagram') return text;
     return this.stripInstagramUsername(text, item.metadata?.author);
   }

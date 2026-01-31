@@ -44,9 +44,10 @@ export class FiltersManager {
             const term = filters.search.toLowerCase();
             filtered = filtered.filter(item => {
                 const textMatch = item.content.text && item.content.text.toLowerCase().includes(term);
+                const captionsMatch = item.content.captions && item.content.captions.toLowerCase().includes(term);
                 const authorMatch = item.metadata.author && item.metadata.author.toLowerCase().includes(term);
                 const tagMatch = item.categories && item.categories.some(c => c.toLowerCase().includes(term));
-                return textMatch || authorMatch || tagMatch;
+                return textMatch || captionsMatch || authorMatch || tagMatch;
             });
         }
 

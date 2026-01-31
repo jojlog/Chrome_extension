@@ -17,7 +17,8 @@ const DEFAULT_SETTINGS = {
     twitter: true,
     linkedin: true,
     tiktok: true,
-    threads: true
+    threads: true,
+    youtube: true
   },
 
   // Custom Categories (user-defined)

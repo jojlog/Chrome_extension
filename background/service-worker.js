@@ -28,7 +28,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('assets/icons/icon128.png'),
       title: 'Social Media Content Tracker Installed!',
-      message: 'Start browsing Instagram, Threads, Twitter, LinkedIn, or TikTok. Your interactions will be automatically tracked.',
+      message: 'Start browsing Instagram, Threads, YouTube, Twitter, LinkedIn, or TikTok. Your interactions will be automatically tracked.',
       priority: 2
     });
 
@@ -460,7 +460,14 @@ async function handleSaveInteraction(interaction, sender) {
 
         console.log('Notification created for saved interaction');
       }
+    }
 
+    if (result.success && interaction?.platform === 'youtube') {
+      const targetId = result.skippedDuplicate ? result.existingId : interaction.id;
+      await maybeEnrichYouTubeInteraction(targetId, interaction);
+    }
+
+    if (result.success && !result.skippedDuplicate) {
       // Trigger AI processing
       processAIQueue();
     }
@@ -470,6 +477,127 @@ async function handleSaveInteraction(interaction, sender) {
     console.error('Error in handleSaveInteraction:', error);
     return { success: false, error: error.message };
   }
+}
+
+async function maybeEnrichYouTubeInteraction(targetId, interaction) {
+  try {
+    if (!targetId) return;
+    const stored = await storageManager.getInteractionById(targetId);
+    if (!stored) return;
+
+    const content = stored.content || interaction.content || {};
+    const url = content.url || interaction.content?.url || '';
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) return;
+
+    const updatedContent = { ...content };
+
+    const hasImages = Array.isArray(content.imageUrls) && content.imageUrls.length > 0;
+    if (!hasImages) {
+      updatedContent.imageUrls = [`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`];
+    }
+
+    const captions = await fetchYouTubeCaptions(videoId);
+    if (captions) {
+      updatedContent.captions = captions;
+      if (!updatedContent.text || !updatedContent.text.trim()) {
+        updatedContent.text = captions;
+      }
+    }
+
+    await storageManager.updateInteraction(targetId, { content: updatedContent });
+  } catch (error) {
+    console.warn('YouTube enrichment failed:', error);
+  }
+}
+
+function extractYouTubeVideoId(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes('youtu.be')) {
+      return parsed.pathname.replace('/', '').trim();
+    }
+    if (parsed.pathname.startsWith('/shorts/')) {
+      const parts = parsed.pathname.split('/');
+      return parts[2] || '';
+    }
+    return parsed.searchParams.get('v') || '';
+  } catch (error) {
+    return '';
+  }
+}
+
+async function fetchYouTubeCaptions(videoId) {
+  try {
+    const listUrl = `https://www.youtube.com/api/timedtext?type=list&v=${encodeURIComponent(videoId)}`;
+    const listResp = await fetch(listUrl, { cache: 'no-store' });
+    if (!listResp.ok) return '';
+    const listText = await listResp.text();
+    const tracks = parseCaptionTracks(listText);
+    const track = tracks.find(track => track.langCode?.startsWith('en')) || tracks[0];
+    const langCode = track?.langCode || 'en';
+    const kind = track?.kind || '';
+
+    const captionUrl = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${encodeURIComponent(langCode)}${kind ? `&kind=${encodeURIComponent(kind)}` : ''}`;
+    const captionResp = await fetch(captionUrl, { cache: 'no-store' });
+    if (captionResp.ok) {
+      const captionBody = await captionResp.text();
+      const text = parseCaptionText(captionBody);
+      if (text) return text.trim();
+    }
+
+    if (!tracks.length) {
+      const fallbackResp = await fetch(`https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=en&kind=asr`, { cache: 'no-store' });
+      if (!fallbackResp.ok) return '';
+      const fallbackBody = await fallbackResp.text();
+      const fallbackText = parseCaptionText(fallbackBody);
+      return fallbackText.trim();
+    }
+
+    return '';
+  } catch (error) {
+    console.warn('Failed to fetch YouTube captions:', error);
+    return '';
+  }
+}
+
+function parseCaptionTracks(xmlText) {
+  if (!xmlText) return [];
+  const tracks = [];
+  const trackMatches = xmlText.match(/<track\\b[^>]*>/g) || [];
+  trackMatches.forEach((track) => {
+    const langCode = getXmlAttr(track, 'lang_code');
+    const kind = getXmlAttr(track, 'kind');
+    if (langCode) {
+      tracks.push({ langCode, kind });
+    }
+  });
+  return tracks;
+}
+
+function parseCaptionText(payload) {
+  if (!payload) return '';
+  if (payload.includes('<text')) {
+    const lines = [];
+    const textMatches = payload.match(/<text\\b[^>]*>[\\s\\S]*?<\\/text>/g) || [];
+    textMatches.forEach((block) => {
+      const inner = block.replace(/<text\\b[^>]*>/, '').replace(/<\\/text>/, '');
+      const decoded = decodeHtmlEntities(inner.replace(/\\n/g, ' ').trim()).replace(/<[^>]+>/g, '');
+      if (decoded) lines.push(decoded);
+    });
+    return lines.join(' ');
+  }
+
+  // VTT fallback
+  const lines = payload.split('\\n').map(line => line.trim());
+  const cleaned = lines.filter(line => line && !line.includes('-->') && line !== 'WEBVTT' && !line.startsWith('NOTE'));
+  return cleaned.join(' ');
+}
+
+function getXmlAttr(tag, name) {
+  const match = tag.match(new RegExp(`${name}=\"([^\"]+)\"`));
+  return match ? match[1] : '';
 }
 
 async function cacheInteractionPreview(interaction) {

@@ -77,6 +77,7 @@ class PopupManager {
         // Update platform stats
         document.getElementById('instagram-count').textContent = stats.byPlatform.instagram || 0;
         document.getElementById('threads-count').textContent = stats.byPlatform.threads || 0;
+        document.getElementById('youtube-count').textContent = stats.byPlatform.youtube || 0;
         document.getElementById('twitter-count').textContent = stats.byPlatform.twitter || 0;
         document.getElementById('linkedin-count').textContent = stats.byPlatform.linkedin || 0;
         document.getElementById('tiktok-count').textContent = stats.byPlatform.tiktok || 0;
@@ -158,7 +159,7 @@ class PopupManager {
 
     if (!supported) {
       if (autoImportEnabled && !autoImportPaused) {
-        context = 'Open Instagram, Threads, X, LinkedIn, or TikTok to import saved content.';
+        context = 'Open Instagram, Threads, YouTube, X, LinkedIn, or TikTok to import saved content.';
       } else if (!autoImportEnabled) {
         context = 'Open a supported site to see auto-import status.';
       }
@@ -235,6 +236,7 @@ class PopupManager {
         'instagram.com',
         'threads.net',
         'threads.com',
+        'youtube.com',
         'x.com',
         'twitter.com',
         'linkedin.com',
@@ -352,7 +354,13 @@ class PopupManager {
 
     const content = document.createElement('div');
     content.className = 'recent-item-content';
-    content.textContent = item.content.text || 'No text content';
+    const text = (item.content.text || item.content.captions || '').trim();
+    const hasMedia = !!item.content.previewDataUrl || (Array.isArray(item.content.imageUrls) && item.content.imageUrls.length > 0) || !!item.content.videoUrl;
+    if (!text && !hasMedia) {
+      content.textContent = 'NO IMAGE';
+    } else {
+      content.textContent = text || 'No text content';
+    }
 
     const meta = document.createElement('div');
     meta.className = 'recent-item-meta';

@@ -46,6 +46,7 @@ export class ModalsManager {
         if (settings.enabledPlatforms) {
             document.getElementById('enable-instagram').checked = settings.enabledPlatforms.instagram !== false;
             document.getElementById('enable-threads').checked = settings.enabledPlatforms.threads !== false;
+            document.getElementById('enable-youtube').checked = settings.enabledPlatforms.youtube !== false;
             document.getElementById('enable-twitter').checked = settings.enabledPlatforms.twitter !== false;
             document.getElementById('enable-linkedin').checked = settings.enabledPlatforms.linkedin !== false;
             document.getElementById('enable-tiktok').checked = settings.enabledPlatforms.tiktok !== false;
@@ -86,6 +87,7 @@ export class ModalsManager {
             enabledPlatforms: {
                 instagram: document.getElementById('enable-instagram').checked,
                 threads: document.getElementById('enable-threads').checked,
+                youtube: document.getElementById('enable-youtube').checked,
                 twitter: document.getElementById('enable-twitter').checked,
                 linkedin: document.getElementById('enable-linkedin').checked,
                 tiktok: document.getElementById('enable-tiktok').checked
