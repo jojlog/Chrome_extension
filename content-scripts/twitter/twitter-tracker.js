@@ -396,13 +396,18 @@ class TwitterTracker extends BasePlatformTracker {
 
     const normalizedPath = pathname.replace(/\/+$/, '');
 
-    // Twitter bookmarks: x.com/i/bookmarks or twitter.com/i/bookmarks
-    if (normalizedPath === '/i/bookmarks' || normalizedPath.startsWith('/i/bookmarks/')) {
+    // Twitter bookmarks: x.com/i/bookmarks or x.com/bookmarks (new routing)
+    if (normalizedPath === '/i/bookmarks' ||
+      normalizedPath.startsWith('/i/bookmarks/') ||
+      normalizedPath === '/bookmarks' ||
+      normalizedPath.startsWith('/bookmarks/')) {
       return 'bookmarks';
     }
 
-    // Twitter likes: x.com/{username}/likes (ignore query string)
-    if (normalizedPath.match(/^\/[^/]+\/likes(?:\/|$)/)) {
+    // Twitter likes: x.com/{username}/likes or x.com/i/likes
+    if (normalizedPath.match(/^\/[^/]+\/likes(?:\/|$)/) ||
+      normalizedPath === '/i/likes' ||
+      normalizedPath.startsWith('/i/likes/')) {
       return 'likes';
     }
 
@@ -418,11 +423,56 @@ class TwitterTracker extends BasePlatformTracker {
       'section[aria-label*="Timeline"]'
     ];
 
+    const isScrollableByTest = (node) => {
+      if (!node || !(node instanceof Element)) return false;
+      const clientHeight = node.clientHeight || 0;
+      const scrollHeight = node.scrollHeight || 0;
+      if (clientHeight < 200 || scrollHeight - clientHeight <= 10) return false;
+      const before = node.scrollTop;
+      node.scrollTop = before + 1;
+      const changed = node.scrollTop !== before;
+      if (changed) {
+        node.scrollTop = before;
+      }
+      return changed;
+    };
+
+    const findScrollableAncestor = (el) => {
+      for (let node = el; node && node !== document.body; node = node.parentElement) {
+        if (isScrollableByTest(node)) return node;
+      }
+      return null;
+    };
+
+    // Prefer a scrollable container that actually holds posts.
+    const post = document.querySelector('article[data-testid="tweet"], article[role="article"]');
+    if (post) {
+      const scroller = findScrollableAncestor(post);
+      if (scroller) return scroller;
+    }
+
     for (const selector of candidates) {
       const el = document.querySelector(selector);
-      if (el) return el;
+      if (!el) continue;
+      if (isScrollableByTest(el)) return el;
+      const scroller = findScrollableAncestor(el);
+      if (scroller) return scroller;
     }
     return null;
+  }
+
+  scrollByAmount(container, amount) {
+    const beforeTop = this.getScrollTop(container);
+    super.scrollByAmount(container, amount);
+    const afterTop = this.getScrollTop(container);
+    if (afterTop !== beforeTop) return;
+
+    const posts = this.findAllPosts();
+    const lastPost = posts.length ? posts[posts.length - 1] : null;
+    if (lastPost && typeof lastPost.scrollIntoView === 'function') {
+      console.log('twitter: Fallback scrollIntoView for auto-scroll');
+      lastPost.scrollIntoView({ block: 'end' });
+    }
   }
 }
 

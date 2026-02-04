@@ -378,6 +378,17 @@ class BasePlatformTracker {
   }
 
   startAutoScrollImport(origin = 'overlay') {
+    const detectedMode = this.detectPageMode ? this.detectPageMode() : this.pageMode;
+    if (detectedMode && detectedMode !== this.pageMode) {
+      this.pageMode = detectedMode;
+    }
+
+    console.log(`${this.platform}: startAutoScrollImport`, {
+      origin,
+      pageMode: this.pageMode,
+      url: window.location?.href || ''
+    });
+
     if (!this.pageMode || this.pageMode === 'feed') {
       this.ensureAutoScrollOverlay();
       this.updateAutoScrollOverlay('Stopped', 'Open a saved/liked page to start auto-scroll.', true);
@@ -389,6 +400,12 @@ class BasePlatformTracker {
     }
 
     this.autoScrollContainer = this.getScrollContainer(true);
+    try {
+      const containerTag = this.autoScrollContainer ? this.autoScrollContainer.tagName : 'null';
+      console.log(`${this.platform}: Auto-scroll container selected`, this.autoScrollContainer, containerTag);
+    } catch (error) {
+      console.log(`${this.platform}: Auto-scroll container selected`);
+    }
     this.autoScrollState.running = true;
     this.autoScrollState.paused = false;
     this.autoScrollState.stopped = false;
@@ -464,6 +481,11 @@ class BasePlatformTracker {
       const stepRatio = this.randomBetween(0.45, 0.85);
       const stepSize = Math.max(200, Math.floor(window.innerHeight * stepRatio));
       this.scrollByAmount(scrollContainer, stepSize);
+      const immediateTop = this.getScrollTop(scrollContainer);
+      if (immediateTop === beforeTop && scrollContainer && scrollContainer !== document.body &&
+        scrollContainer !== document.documentElement && scrollContainer !== document.scrollingElement) {
+        window.scrollBy(0, stepSize);
+      }
 
       const stepDelay = this.randomBetween(800, 2500);
       await new Promise(resolve => setTimeout(resolve, stepDelay));
@@ -588,7 +610,26 @@ class BasePlatformTracker {
       const scrollHeight = el.scrollHeight || 0;
       const hasSize = clientHeight >= 200;
       const contentTaller = scrollHeight - clientHeight > 10;
-      return hasSize && (contentTaller || hasScroll);
+      const isDocumentScroller = (
+        el === document.scrollingElement ||
+        el === document.documentElement ||
+        el === document.body
+      );
+      const canScrollByTop = () => {
+        if (!contentTaller) return false;
+        const before = el.scrollTop;
+        el.scrollTop = before + 1;
+        const changed = el.scrollTop !== before;
+        if (changed) {
+          el.scrollTop = before;
+        }
+        return changed;
+      };
+      if (isDocumentScroller) {
+        return hasSize && contentTaller;
+      }
+      if (!hasScroll && !canScrollByTop()) return false;
+      return hasSize && contentTaller;
     };
 
     const addIfScrollable = (el) => {

@@ -122,6 +122,9 @@ async function handleMessage(message, sender) {
     case 'FETCH_POST_THUMBNAIL':
       return await handleFetchPostThumbnail(message.url);
 
+    case 'FETCH_YOUTUBE_CAPTIONS':
+      return await handleFetchYouTubeCaptionsMessage(message.url);
+
     case 'INJECT_TIKTOK_HOOK':
       return await handleInjectTikTokHook(sender);
 
@@ -224,6 +227,19 @@ async function handleFetchPostThumbnail(url) {
     return { success: true, thumbnailUrl: thumbnailUrl || '' };
   } catch (error) {
     console.warn('Failed to fetch post thumbnail:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleFetchYouTubeCaptionsMessage(url) {
+  try {
+    if (!url) return { success: false, error: 'Missing URL' };
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) return { success: false, error: 'Missing video id' };
+    const captions = await fetchYouTubeCaptions(videoId);
+    return { success: true, captions: captions || '' };
+  } catch (error) {
+    console.warn('Failed to fetch YouTube captions:', error);
     return { success: false, error: error.message };
   }
 }

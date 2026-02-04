@@ -43,6 +43,7 @@ class DashboardManager {
       sensitivity: 50
     };
     this.instagramCaptionFetchAttempted = new Set();
+    this.youtubeCaptionFetchAttempted = new Set();
     this.thumbnailBackfillAttempted = new Set();
     this.thumbnailBackfillQueue = [];
     this.thumbnailBackfillActive = false;
@@ -244,6 +245,7 @@ class DashboardManager {
     // Render (pass selectMode and selectedItems)
     this.contentRenderer.renderContent(sorted, this.viewMode, this.selectMode, this.selectedItems);
     this.queueInstagramCaptionFetch(sorted);
+    this.queueYouTubeCaptionFetch(sorted);
     this.queueThumbnailBackfill(sorted);
 
     // Update selection bar if in select mode
@@ -265,6 +267,20 @@ class DashboardManager {
     });
   }
 
+  queueYouTubeCaptionFetch(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+    items.forEach(item => {
+      if (!item || item.platform !== 'youtube' || !item.id) return;
+      if (this.youtubeCaptionFetchAttempted.has(item.id)) return;
+      const text = (item.content?.text || '').trim();
+      const captions = (item.content?.captions || '').trim();
+      if (text || captions) return;
+      if (!item.content?.url) return;
+      this.youtubeCaptionFetchAttempted.add(item.id);
+      this.maybeFetchYouTubeCaptions(item);
+    });
+  }
+
   queueThumbnailBackfill(items) {
     if (!Array.isArray(items) || items.length === 0) return;
     const now = Date.now();
@@ -280,8 +296,8 @@ class DashboardManager {
 
   shouldBackfillThumbnail(item, now) {
     if (!item || !item.content) return false;
-    if (!(item.platform === 'instagram' || item.platform === 'tiktok')) return false;
-    if (!item.content.videoUrl) return false;
+    if (!(item.platform === 'instagram' || item.platform === 'tiktok' || item.platform === 'youtube')) return false;
+    if (!item.content.videoUrl && item.platform !== 'youtube') return false;
     if (item.content.previewDataUrl) return false;
     if (item.content.imageUrls && item.content.imageUrls.length > 0) return false;
     if (!item.content.url) return false;
@@ -314,7 +330,13 @@ class DashboardManager {
         type: 'FETCH_POST_THUMBNAIL',
         url: item.content.url
       });
-      const thumbnailUrl = (response?.success ? response.thumbnailUrl : '').trim();
+      let thumbnailUrl = (response?.success ? response.thumbnailUrl : '').trim();
+      if (!thumbnailUrl && item.platform === 'youtube') {
+        const videoId = this.extractYouTubeVideoId(item.content.url);
+        if (videoId) {
+          thumbnailUrl = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+        }
+      }
       const updatedContent = {
         ...item.content,
         thumbnailFetchedAt: Date.now()
@@ -338,6 +360,64 @@ class DashboardManager {
       }
     } catch (error) {
       console.warn('Failed to backfill thumbnail:', error);
+    }
+  }
+
+  extractYouTubeVideoId(url) {
+    if (!url) return '';
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.includes('youtu.be')) {
+        return parsed.pathname.replace('/', '').trim();
+      }
+      if (parsed.pathname.startsWith('/shorts/')) {
+        const parts = parsed.pathname.split('/');
+        return parts[2] || '';
+      }
+      return parsed.searchParams.get('v') || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
+  async maybeFetchYouTubeCaptions(item) {
+    try {
+      if (!item || item.platform !== 'youtube') return;
+      const url = item.content?.url;
+      if (!url) return;
+
+      const response = await chrome.runtime.sendMessage({
+        type: 'FETCH_YOUTUBE_CAPTIONS',
+        url
+      });
+
+      const captions = (response?.success ? response.captions : '').trim();
+      if (!captions) return;
+
+      const updatedContent = {
+        ...item.content,
+        captions
+      };
+      if (!updatedContent.text || !updatedContent.text.trim()) {
+        updatedContent.text = captions;
+      }
+
+      item.content = updatedContent;
+      this.itemsById.set(item.id, item);
+      const index = this.allItems.findIndex(entry => entry.id === item.id);
+      if (index !== -1) {
+        this.allItems[index] = item;
+      }
+
+      await chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id: item.id,
+        updates: { content: updatedContent }
+      });
+
+      this.filterAndDisplayContent();
+    } catch (error) {
+      console.warn('Failed to fetch YouTube captions:', error);
     }
   }
 
