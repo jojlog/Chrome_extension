@@ -118,19 +118,37 @@ class DashboardManager {
         interactions = fallback?.interactions || [];
       }
 
-      this.allItems = interactions;
-      this.itemsById = new Map(this.allItems.map(item => [item.id, item]));
-      this.aiTokenCache = new Map();
-      this.aiSuggestedItems = [];
-      this.aiSuggestedScoreMap = new Map();
-      this.cleanupInstagramUrls();
-      this.loadCategoriesFromContent();
-      this.updateCategorySuggestionBar();
-      this.filterAndDisplayContent();
+      this.applyInteractions(interactions);
     } catch (error) {
       console.error('Error loading content:', error);
     } finally {
       if (loadingEl) loadingEl.style.display = 'none';
+    }
+  }
+
+  applyInteractions(interactions, options = {}) {
+    const { skipWrites = false } = options;
+    this.allItems = interactions || [];
+    this.itemsById = new Map(this.allItems.map(item => [item.id, item]));
+    this.aiTokenCache = new Map();
+    this.aiSuggestedItems = [];
+    this.aiSuggestedScoreMap = new Map();
+    if (!skipWrites) {
+      this.cleanupInstagramUrls();
+    }
+    this.loadCategoriesFromContent();
+    this.updateCategorySuggestionBar();
+    this.filterAndDisplayContent({ skipEnrichments: skipWrites });
+  }
+
+  async pullFromLocalStorage() {
+    try {
+      const { interactions = [] } = await chrome.storage.local.get('interactions');
+      this.applyInteractions(interactions, { skipWrites: true });
+      alert(`Pulled ${interactions.length} items from local storage.`);
+    } catch (error) {
+      console.error('Error pulling from local storage:', error);
+      alert('Failed to pull local data: ' + error.message);
     }
   }
 
@@ -234,7 +252,8 @@ class DashboardManager {
     return counts;
   }
 
-  filterAndDisplayContent() {
+  filterAndDisplayContent(options = {}) {
+    const { skipEnrichments = false } = options;
     // Filter
     const filtered = this.filtersManager.filterContent(this.allItems, this.currentFilters);
 
@@ -244,9 +263,11 @@ class DashboardManager {
 
     // Render (pass selectMode and selectedItems)
     this.contentRenderer.renderContent(sorted, this.viewMode, this.selectMode, this.selectedItems);
-    this.queueInstagramCaptionFetch(sorted);
-    this.queueYouTubeCaptionFetch(sorted);
-    this.queueThumbnailBackfill(sorted);
+    if (!skipEnrichments) {
+      this.queueInstagramCaptionFetch(sorted);
+      this.queueYouTubeCaptionFetch(sorted);
+      this.queueThumbnailBackfill(sorted);
+    }
 
     // Update selection bar if in select mode
     if (this.selectMode) {
@@ -644,6 +665,57 @@ class DashboardManager {
       alert('Failed to save categories: ' + error.message);
       // Revert reload
       this.loadContent();
+    }
+  }
+
+  async toggleFavorite(id) {
+    const item = this.itemsById.get(id);
+    if (!item) return;
+    const prev = !!item.isFavorite;
+    const next = !prev;
+
+    const itemIndex = this.allItems.findIndex(entry => entry.id === id);
+    item.isFavorite = next;
+    this.itemsById.set(id, item);
+    if (itemIndex !== -1) {
+      this.allItems[itemIndex] = item;
+    }
+    this.filterAndDisplayContent();
+
+    let updated = false;
+    let lastError = null;
+
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'UPDATE_INTERACTION',
+        id,
+        updates: { isFavorite: next }
+      });
+      updated = !!(response && response.success);
+      if (!updated) {
+        lastError = new Error(response?.error || 'Unknown error');
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (!updated) {
+      try {
+        updated = await this.storage.updateInteraction(id, { isFavorite: next });
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (!updated) {
+      console.error('Error updating favorite:', lastError);
+      item.isFavorite = prev;
+      this.itemsById.set(id, item);
+      if (itemIndex !== -1) {
+        this.allItems[itemIndex] = item;
+      }
+      this.filterAndDisplayContent();
+      alert('Failed to update favorite: ' + (lastError?.message || 'Unknown error'));
     }
   }
 
@@ -1636,6 +1708,15 @@ class DashboardManager {
           this.userCategories,
           this.userAccounts
         );
+        return;
+      }
+      const { settings } = await chrome.storage.local.get('settings');
+      if (settings) {
+        this.modalsManager.showSettingsModal(
+          settings,
+          this.userCategories,
+          this.userAccounts
+        );
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -1648,6 +1729,10 @@ class DashboardManager {
 
   async saveSettings(updates) {
     try {
+      const { settings } = await chrome.storage.local.get('settings');
+      const merged = { ...(settings || {}), ...updates };
+      await chrome.storage.local.set({ settings: merged });
+
       const response = await chrome.runtime.sendMessage({
         type: 'UPDATE_SETTINGS',
         updates
@@ -1657,9 +1742,10 @@ class DashboardManager {
         alert('Settings saved successfully!');
         // Reload to apply changes (e.g. platforms)
         window.location.reload();
-      } else {
-        throw new Error(response?.error);
+        return;
       }
+      alert('Settings saved successfully!');
+      window.location.reload();
     } catch (error) {
       console.error('Error saving settings:', error);
       alert('Failed to save settings: ' + error.message);
@@ -1800,6 +1886,11 @@ class DashboardManager {
     // View Toggle
     document.getElementById('view-toggle')?.addEventListener('click', () => {
       this.toggleViewMode();
+    });
+
+    // Pull from local storage
+    document.getElementById('pull-local-btn')?.addEventListener('click', () => {
+      this.pullFromLocalStorage();
     });
 
     // Sidebar buttons

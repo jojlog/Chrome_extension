@@ -565,6 +565,11 @@ body {
   box-shadow: 0 10px 22px rgba(44, 32, 21, 0.18);
 }
 
+.content-card.favorite {
+  border-color: rgba(197, 107, 42, 0.4);
+  box-shadow: 0 10px 24px rgba(197, 107, 42, 0.18);
+}
+
 /* Card layout used by current renderer */
 .card-header {
   display: flex;
@@ -1542,6 +1547,23 @@ body {
 
 .btn-icon:hover {
   background: var(--surface-2);
+}
+
+.btn-icon.favorite-btn {
+  color: #a9541f;
+}
+
+.btn-icon.favorite-btn:hover {
+  background: rgba(197, 107, 42, 0.12);
+}
+
+.btn-icon.favorite-btn[aria-pressed="true"] {
+  background: linear-gradient(120deg, #c56b2a, #a9541f);
+  color: #fff;
+}
+
+.btn-icon.favorite-btn[aria-pressed="true"]:hover {
+  background: linear-gradient(120deg, #b05f26, #954a1c);
 }
 
 .btn-icon svg {

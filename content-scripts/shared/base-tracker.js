@@ -60,8 +60,11 @@ class BasePlatformTracker {
     this.autoScrollInterruptHandler = null;
     this.autoScrollContainer = null;
     this.savedStatusCache = new Map();
+    this.favoriteStatusCache = new Map();
     this.currentIndicator = null;
     this.currentIndicatorPost = null;
+    this.runtimeUnavailableUntil = 0;
+    this.manualSaveSweepInterval = null;
 
     console.log(`${this.platform} tracker initializing...`);
     this.init();
@@ -122,11 +125,69 @@ class BasePlatformTracker {
     });
   }
 
+  async sendRuntimeMessageWithTimeout(message, timeoutMs = 800) {
+    if (!this.ensureExtensionContext()) {
+      throw new Error('Extension context invalidated');
+    }
+    if (Date.now() < this.runtimeUnavailableUntil) {
+      throw new Error('Runtime unavailable');
+    }
+    return Promise.race([
+      new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+              this.runtimeUnavailableUntil = Date.now() + 30000;
+              const err = new Error(chrome.runtime.lastError.message);
+              if (err.message.includes('context invalidated') || err.message.includes('Receiving end does not exist')) {
+                this.handleInvalidContext();
+              }
+              reject(err);
+              return;
+            }
+            resolve(response);
+          });
+        } catch (error) {
+          this.runtimeUnavailableUntil = Date.now() + 30000;
+          if (String(error?.message || '').includes('context invalidated')) {
+            this.handleInvalidContext();
+          }
+          reject(error);
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime message timeout')), timeoutMs))
+    ]).catch((error) => {
+      if (error?.message?.includes('timeout')) {
+        this.runtimeUnavailableUntil = Date.now() + 30000;
+      }
+      throw error;
+    });
+  }
+
+  ensureExtensionContext() {
+    const valid = typeof chrome !== 'undefined'
+      && !!chrome.runtime?.id
+      && !!chrome.storage?.local;
+    if (!valid) {
+      this.runtimeUnavailableUntil = Date.now() + 30000;
+      this.handleInvalidContext();
+    }
+    return valid;
+  }
+
+  handleInvalidContext() {
+    if (this.autoScrollState?.running) {
+      this.stopAutoScrollImport('stopped');
+      this.updateAutoScrollOverlay('Stopped', 'Extension reloaded. Refresh the page.', true);
+    }
+  }
+
   async init() {
     await this.waitForPageLoad();
 
     this.settings = await this.loadSettings();
     this.setupSettingsListener();
+    this.markTrackerInjected();
 
     // Detect page mode (saved, bookmarks, likes, etc.)
     this.pageMode = this.detectPageMode();
@@ -136,6 +197,7 @@ class BasePlatformTracker {
     this.setupMutationObserver();
     this.setupEventListeners();
     this.setupTimeThresholdListener();
+    this.startManualSaveButtonSweep();
 
     // If on a saved/liked page, trigger bulk capture after a short delay
     if (this.shouldAutoImport()) {
@@ -163,6 +225,15 @@ class BasePlatformTracker {
       childList: true,
       subtree: true
     });
+  }
+
+  markTrackerInjected() {
+    try {
+      document.documentElement.setAttribute('data-ct-tracker', this.platform);
+      document.documentElement.setAttribute('data-ct-manual-save', '1');
+    } catch (error) {
+      // ignore
+    }
   }
 
   handleMutations(mutations) {
@@ -211,6 +282,7 @@ class BasePlatformTracker {
       this.timeTracker.observePost(postElement, postId);
     }
     postElement.dataset.postId = postId;
+    this.ensureManualSaveButton(postElement);
   }
 
   setupEventListeners() {
@@ -221,6 +293,17 @@ class BasePlatformTracker {
 
   handleClick(event) {
     const target = event.target;
+    const manualButton = target?.closest?.('.ct-manual-save-btn');
+    if (manualButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      const postElement = this.findPostElement(manualButton);
+      if (postElement) {
+        this.handleManualSaveClick(postElement, manualButton);
+      }
+      return;
+    }
     if (this.isLikeButton(target)) {
       const postElement = this.findPostElement(target);
       if (postElement && !this.isAlreadyLiked(target)) {
@@ -264,24 +347,294 @@ class BasePlatformTracker {
     });
   }
 
-  async loadSettings() {
+  startManualSaveButtonSweep() {
+    if (this.manualSaveSweepInterval) return;
+    const sweep = () => {
+      if (!this.ensureExtensionContext()) return;
+      const selectors = this.getPostContainerSelectors();
+      if (!selectors || selectors.length === 0) return;
+      const posts = ContentExtractor.findAllWithFallback(document, selectors);
+      posts.forEach(post => this.ensureManualSaveButton(post));
+    };
+    sweep();
+    this.manualSaveSweepInterval = setInterval(sweep, 2000);
+  }
+
+  ensureManualSaveButton(postElement) {
+    if (!postElement) return;
+    const existingSave = postElement.querySelector('.ct-manual-save-btn');
+    const existingFavorite = postElement.querySelector('.ct-manual-favorite-btn');
+    const hasSaveState = !!existingSave?.dataset?.state;
+    const hasFavoriteState = !!existingFavorite?.dataset?.state;
+    if (existingSave && existingFavorite && hasSaveState && hasFavoriteState) return;
+
+    const computed = window.getComputedStyle(postElement);
+    if (computed.position === 'static') {
+      postElement.dataset.ctOriginalPosition = 'static';
+      postElement.style.position = 'relative';
+    }
+
+    let favoriteButton = existingFavorite;
+    if (!favoriteButton) {
+      favoriteButton = document.createElement('button');
+      favoriteButton.type = 'button';
+      favoriteButton.className = 'ct-manual-favorite-btn';
+      favoriteButton.textContent = '☆';
+      favoriteButton.setAttribute('aria-label', 'Favorite in Content Tracker');
+      favoriteButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        this.handleManualFavoriteClick(postElement, favoriteButton);
+      }, true);
+    }
+
+    let saveButton = existingSave;
+    if (!saveButton) {
+      saveButton = document.createElement('button');
+      saveButton.type = 'button';
+      saveButton.className = 'ct-manual-save-btn';
+      saveButton.textContent = 'Save';
+      saveButton.setAttribute('aria-label', 'Save to Content Tracker');
+      saveButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        this.handleManualSaveClick(postElement, saveButton);
+      }, true);
+    }
+
+    if (!existingFavorite) {
+      if (existingSave) {
+        postElement.insertBefore(favoriteButton, existingSave);
+      } else {
+        postElement.appendChild(favoriteButton);
+      }
+      this.setManualFavoriteButtonState(favoriteButton, 'ready');
+      this.isPostFavorite(postElement).then((favorited) => {
+        if (favorited) this.setManualFavoriteButtonState(favoriteButton, 'favorited');
+      }).catch(() => {});
+    }
+
+    if (!existingSave) {
+      postElement.appendChild(saveButton);
+      this.setManualSaveButtonState(saveButton, 'ready');
+      this.isPostSaved(postElement).then((saved) => {
+        if (saved) this.setManualSaveButtonState(saveButton, 'saved');
+      }).catch(() => {});
+    }
+
+    if (existingFavorite && !existingFavorite.dataset.state) {
+      this.setManualFavoriteButtonState(existingFavorite, 'ready');
+      this.isPostFavorite(postElement).then((favorited) => {
+        if (favorited) this.setManualFavoriteButtonState(existingFavorite, 'favorited');
+      }).catch(() => {});
+    }
+
+    if (existingSave && !existingSave.dataset.state) {
+      this.setManualSaveButtonState(existingSave, 'ready');
+      this.isPostSaved(postElement).then((saved) => {
+        if (saved) this.setManualSaveButtonState(existingSave, 'saved');
+      }).catch(() => {});
+    }
+  }
+
+  setManualSaveButtonState(button, state) {
+    if (!button) return;
+    button.dataset.state = state;
+    button.classList.toggle('ct-manual-save-btn--saved', state === 'saved');
+    button.classList.toggle('ct-manual-save-btn--saving', state === 'saving');
+    button.disabled = state === 'saving' || state === 'saved';
+    if (state === 'saving') {
+      button.textContent = 'Saving...';
+    } else if (state === 'saved') {
+      button.textContent = 'Saved';
+    } else {
+      button.textContent = 'Save';
+    }
+  }
+
+  setManualFavoriteButtonState(button, state) {
+    if (!button) return;
+    button.dataset.state = state;
+    button.classList.toggle('ct-manual-favorite-btn--favorited', state === 'favorited');
+    button.classList.toggle('ct-manual-favorite-btn--saving', state === 'saving');
+    button.disabled = state === 'saving';
+    if (state === 'saving') {
+      button.textContent = '⋯';
+    } else if (state === 'favorited') {
+      button.textContent = '★';
+    } else {
+      button.textContent = '☆';
+    }
+  }
+
+  async handleManualSaveClick(postElement, button) {
+    if (!postElement || !button) return;
+    if (button.dataset.state === 'saving' || button.dataset.state === 'saved') return;
+    this.setManualSaveButtonState(button, 'saving');
+    const saved = await this.captureInteraction('save', postElement);
+    if (saved) {
+      this.setManualSaveButtonState(button, 'saved');
+    } else {
+      this.setManualSaveButtonState(button, 'ready');
+    }
+  }
+
+  async handleManualFavoriteClick(postElement, button) {
+    if (!postElement || !button) return;
+    if (button.dataset.state === 'saving') return;
+    this.setManualFavoriteButtonState(button, 'saving');
+
+    const { contentKey, content } = this.buildContentKeyForPost(postElement);
+    if (!contentKey) {
+      this.setManualFavoriteButtonState(button, 'ready');
+      return;
+    }
+
+    const existing = await this.findInteractionByKey(contentKey);
+    if (!existing) {
+      const saved = await this.captureInteraction('save', postElement, { isFavorite: true });
+      if (saved) {
+        this.savedStatusCache.set(contentKey, true);
+        this.favoriteStatusCache.set(contentKey, true);
+        const saveBtn = postElement.querySelector('.ct-manual-save-btn');
+        if (saveBtn) this.setManualSaveButtonState(saveBtn, 'saved');
+        this.setManualFavoriteButtonState(button, 'favorited');
+      } else {
+        this.setManualFavoriteButtonState(button, 'ready');
+      }
+      return;
+    }
+
+    const nextFavorite = !existing.isFavorite;
+    const updated = await this.updateInteractionFavorite(existing.id, nextFavorite, contentKey);
+    if (updated) {
+      this.favoriteStatusCache.set(contentKey, nextFavorite);
+      this.setManualFavoriteButtonState(button, nextFavorite ? 'favorited' : 'ready');
+      if (nextFavorite) {
+        const saveBtn = postElement.querySelector('.ct-manual-save-btn');
+        if (saveBtn) this.setManualSaveButtonState(saveBtn, 'saved');
+      }
+    } else {
+      this.setManualFavoriteButtonState(button, existing.isFavorite ? 'favorited' : 'ready');
+    }
+  }
+
+  buildContentKeyForPost(postElement) {
+    const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
+    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+    return { contentKey, content };
+  }
+
+  async findInteractionByKey(contentKey) {
+    if (!contentKey) return null;
     try {
-      const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_SETTINGS });
+      if (this.ensureExtensionContext()) {
+        try {
+          const response = await this.sendRuntimeMessageWithTimeout({
+            type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
+            contentKey
+          }, 800);
+          if (response && response.success && response.data) {
+            return response.data;
+          }
+        } catch (error) {
+          // fall through to storage
+        }
+      }
+
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+      if (interactionIndex && typeof interactionIndex === 'object' && interactionIndex[contentKey]) {
+        const id = interactionIndex[contentKey];
+        return interactions.find(item => item?.id === id) || null;
+      }
+      return interactions.find(item => item?.contentKey === contentKey) || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async updateInteractionFavorite(id, isFavorite, contentKey = '') {
+    if (!id) return false;
+    try {
+      if (this.ensureExtensionContext()) {
+        const response = await this.sendRuntimeMessageWithTimeout({
+          type: MESSAGE_TYPES.UPDATE_INTERACTION,
+          id,
+          updates: { isFavorite }
+        }, 800);
+        if (response && response.success) {
+          return true;
+        }
+      }
+    } catch (error) {
+      // fallback to local storage below
+    }
+
+    try {
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+      const index = interactions.findIndex(item => item?.id === id);
+      if (index === -1) return false;
+      const updated = { ...interactions[index], isFavorite };
+      interactions[index] = updated;
+      await chrome.storage.local.set({ interactions, interactionIndex });
+      if (contentKey) {
+        this.favoriteStatusCache.set(contentKey, isFavorite);
+      }
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async loadSettings() {
+    const fallbackSettings = {
+      autoImportSavedPages: false,
+      autoImportPaused: false,
+      suppressImportNotifications: true,
+      skipAIForImports: true
+    };
+
+    try {
+      const response = await this.sendRuntimeMessageWithTimeout(
+        { type: MESSAGE_TYPES.GET_SETTINGS },
+        800
+      );
       if (response && response.success) {
         return response.data;
       }
     } catch (error) {
       console.warn(`${this.platform}: Failed to load settings`, error);
     }
-    return {
-      autoImportSavedPages: false,
-      autoImportPaused: false,
-      suppressImportNotifications: true,
-      skipAIForImports: true
-    };
+    try {
+      const { settings } = await chrome.storage.local.get('settings');
+      if (settings) {
+        return { ...fallbackSettings, ...settings };
+      }
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to load settings from storage`, error);
+    }
+    return fallbackSettings;
   }
 
   shouldAutoImport() {
+    if (!this.pageMode && typeof this.detectPageMode === 'function') {
+      const detected = this.detectPageMode();
+      if (detected) {
+        this.pageMode = detected;
+      }
+    }
     return !!(
       this.pageMode &&
       this.pageMode !== 'feed' &&
@@ -367,6 +720,12 @@ class BasePlatformTracker {
   }
 
   triggerManualImport() {
+    if (!this.pageMode && typeof this.detectPageMode === 'function') {
+      const detected = this.detectPageMode();
+      if (detected) {
+        this.pageMode = detected;
+      }
+    }
     if (!this.pageMode || this.pageMode === 'feed') {
       return false;
     }
@@ -378,6 +737,11 @@ class BasePlatformTracker {
   }
 
   startAutoScrollImport(origin = 'overlay') {
+    if (!this.ensureExtensionContext()) {
+      this.ensureAutoScrollOverlay();
+      this.updateAutoScrollOverlay('Stopped', 'Extension reloaded. Refresh the page.', true);
+      return { started: false, reason: 'invalid_context' };
+    }
     const detectedMode = this.detectPageMode ? this.detectPageMode() : this.pageMode;
     if (detectedMode && detectedMode !== this.pageMode) {
       this.pageMode = detectedMode;
@@ -455,6 +819,11 @@ class BasePlatformTracker {
     this.autoScrollState.dailyCount = await this.getDailyAutoScrollCount();
 
     while (this.autoScrollState.running) {
+      if (!this.ensureExtensionContext()) {
+        this.stopAutoScrollImport('stopped');
+        this.updateAutoScrollOverlay('Stopped', 'Extension reloaded. Refresh the page.', true);
+        break;
+      }
       if (this.autoScrollState.paused) {
         await new Promise(resolve => setTimeout(resolve, 300));
         continue;
@@ -504,6 +873,13 @@ class BasePlatformTracker {
       const afterTop = this.getScrollTop(scrollContainer);
       if (afterHeight <= beforeHeight + 10 && afterTop <= beforeTop + 5) {
         this.autoScrollState.noGrowthStreak += 1;
+        if (this.autoScrollState.noGrowthStreak === 1) {
+          if (scrollContainer === document.body ||
+            scrollContainer === document.documentElement ||
+            scrollContainer === document.scrollingElement) {
+            this.autoScrollContainer = null;
+          }
+        }
       } else {
         this.autoScrollState.noGrowthStreak = 0;
       }
@@ -566,6 +942,7 @@ class BasePlatformTracker {
   }
 
   async getDailyAutoScrollCount() {
+    if (!this.ensureExtensionContext()) return 0;
     const today = new Date().toISOString().slice(0, 10);
     return new Promise((resolve) => {
       chrome.storage.local.get('autoScrollDailyCount', (result) => {
@@ -580,6 +957,7 @@ class BasePlatformTracker {
   }
 
   async incrementDailyAutoScrollCount(delta) {
+    if (!this.ensureExtensionContext()) return;
     const today = new Date().toISOString().slice(0, 10);
     return new Promise((resolve) => {
       chrome.storage.local.get('autoScrollDailyCount', (result) => {
@@ -601,6 +979,11 @@ class BasePlatformTracker {
     }
 
     const candidates = [];
+    const isDocumentScroller = (el) => (
+      el === document.scrollingElement ||
+      el === document.documentElement ||
+      el === document.body
+    );
     const isScrollableElement = (el) => {
       if (!el || !(el instanceof Element)) return false;
       const style = window.getComputedStyle(el);
@@ -610,11 +993,6 @@ class BasePlatformTracker {
       const scrollHeight = el.scrollHeight || 0;
       const hasSize = clientHeight >= 200;
       const contentTaller = scrollHeight - clientHeight > 10;
-      const isDocumentScroller = (
-        el === document.scrollingElement ||
-        el === document.documentElement ||
-        el === document.body
-      );
       const canScrollByTop = () => {
         if (!contentTaller) return false;
         const before = el.scrollTop;
@@ -631,6 +1009,23 @@ class BasePlatformTracker {
       if (!hasScroll && !canScrollByTop()) return false;
       return hasSize && contentTaller;
     };
+    const isLikelyScrollableElement = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      const overflowY = style.overflowY || '';
+      const hasScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+      const clientHeight = el.clientHeight || 0;
+      const hasSize = clientHeight >= 200;
+      return hasScroll && hasSize;
+    };
+    const findScrollableAncestor = (el, allowLikely = false) => {
+      for (let node = el; node && node !== document.body; node = node.parentElement) {
+        if (isScrollableElement(node) || (allowLikely && isLikelyScrollableElement(node))) {
+          return node;
+        }
+      }
+      return null;
+    };
 
     const addIfScrollable = (el) => {
       if (!el) return;
@@ -641,10 +1036,29 @@ class BasePlatformTracker {
 
     if (typeof this.getScrollContainerOverride === 'function') {
       const override = this.getScrollContainerOverride();
-      if (override && isScrollableElement(override)) {
+      if (override && override instanceof Element && document.contains(override)) {
         this.autoScrollContainer = override;
         return this.autoScrollContainer;
       }
+    }
+
+    // Prefer an ancestor that contains actual posts, even if scroll height isn't ready yet.
+    try {
+      const postSelectors = typeof this.getPostContainerSelectors === 'function'
+        ? this.getPostContainerSelectors()
+        : [];
+      if (postSelectors && postSelectors.length > 0) {
+        const post = document.querySelector(postSelectors.join(','));
+        if (post) {
+          const ancestor = findScrollableAncestor(post) || findScrollableAncestor(post, true);
+          if (ancestor) {
+            this.autoScrollContainer = ancestor;
+            return this.autoScrollContainer;
+          }
+        }
+      }
+    } catch (error) {
+      // ignore
     }
 
     addIfScrollable(document.scrollingElement);
@@ -665,7 +1079,9 @@ class BasePlatformTracker {
 
     document.querySelectorAll(selector).forEach(el => addIfScrollable(el));
 
-    const best = candidates.reduce((acc, el) => {
+    const preferred = candidates.filter(el => !isDocumentScroller(el));
+    const pool = preferred.length > 0 ? preferred : candidates;
+    const best = pool.reduce((acc, el) => {
       const score = (el.scrollHeight || 0) - (el.clientHeight || 0);
       if (!acc) return el;
       const accScore = (acc.scrollHeight || 0) - (acc.clientHeight || 0);
@@ -846,6 +1262,10 @@ class BasePlatformTracker {
 
   async isPostSaved(postElement) {
     const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
     const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
 
     if (this.savedStatusCache.has(contentKey)) {
@@ -853,12 +1273,36 @@ class BasePlatformTracker {
     }
 
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
-        contentKey
-      });
+      if (this.ensureExtensionContext()) {
+        try {
+          const response = await this.sendRuntimeMessageWithTimeout({
+            type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
+            contentKey
+          }, 800);
+          const saved = !!(response && response.success && response.data);
+          this.savedStatusCache.set(contentKey, saved);
+          return saved;
+        } catch (error) {
+          console.warn(`${this.platform}: Failed to check saved status (runtime)`, error);
+        }
+      }
 
-      const saved = !!(response && response.success && response.data);
+      if (!chrome?.storage?.local) {
+        return false;
+      }
+
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+
+      let saved = false;
+      if (contentKey && interactionIndex && typeof interactionIndex === 'object' && interactionIndex[contentKey]) {
+        saved = true;
+      } else if (contentKey && Array.isArray(interactions) && interactions.length > 0) {
+        saved = interactions.some(item => item?.contentKey === contentKey);
+      }
+
       this.savedStatusCache.set(contentKey, saved);
       return saved;
     } catch (error) {
@@ -867,13 +1311,71 @@ class BasePlatformTracker {
     }
   }
 
-  async captureInteraction(type, postElement) {
+  async isPostFavorite(postElement) {
+    const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
+    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+    if (!contentKey) return false;
+
+    if (this.favoriteStatusCache.has(contentKey)) {
+      return this.favoriteStatusCache.get(contentKey);
+    }
+
     try {
+      if (this.ensureExtensionContext()) {
+        try {
+          const response = await this.sendRuntimeMessageWithTimeout({
+            type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
+            contentKey
+          }, 800);
+          const favorited = !!(response && response.success && response.data && response.data.isFavorite);
+          this.favoriteStatusCache.set(contentKey, favorited);
+          return favorited;
+        } catch (error) {
+          console.warn(`${this.platform}: Failed to check favorite status (runtime)`, error);
+        }
+      }
+
+      if (!chrome?.storage?.local) {
+        return false;
+      }
+
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+
+      let favorited = false;
+      if (interactionIndex && typeof interactionIndex === 'object' && interactionIndex[contentKey]) {
+        const id = interactionIndex[contentKey];
+        const item = interactions.find(entry => entry?.id === id);
+        favorited = !!item?.isFavorite;
+      } else if (Array.isArray(interactions) && interactions.length > 0) {
+        const item = interactions.find(entry => entry?.contentKey === contentKey);
+        favorited = !!item?.isFavorite;
+      }
+
+      this.favoriteStatusCache.set(contentKey, favorited);
+      return favorited;
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to check favorite status`, error);
+      return false;
+    }
+  }
+
+  async captureInteraction(type, postElement, options = {}) {
+    try {
+      if (!this.ensureExtensionContext()) {
+        throw new Error('Extension context invalidated');
+      }
       const postId = postElement.dataset.postId || this.generatePostId(postElement);
       const saveKey = `${postId}_${type}`;
       if (this.pendingSaves.has(saveKey)) {
         console.log(`${this.platform}: Already saving ${type} for post ${postId}`);
-        return;
+        return false;
       }
       this.pendingSaves.set(saveKey, true);
       console.log(`${this.platform}: Capturing ${type} interaction`);
@@ -902,7 +1404,7 @@ class BasePlatformTracker {
         aiProcessed: false,
         tags: [],
         notes: '',
-        isFavorite: false
+        isFavorite: options.isFavorite === true
       };
 
       // Ensure service worker is active before sending message
@@ -920,13 +1422,19 @@ class BasePlatformTracker {
             console.log(`${this.platform}: Successfully saved ${type} interaction`);
             saveSuccess = true;
             this.pendingSaves.delete(saveKey);
+            if (contentKey) {
+              this.savedStatusCache.set(contentKey, true);
+            }
+            if (options.isFavorite && contentKey) {
+              this.favoriteStatusCache.set(contentKey, true);
+            }
 
             if (response.skippedDuplicate) {
               console.log(`${this.platform}: Skipped duplicate ${type} interaction`);
               if (type === 'save') {
                 this.handleDuplicateSave(contentKey, postElement);
               }
-              return;
+              return true;
             }
 
             this.requestPreviewCapture(postElement, interaction.id);
@@ -942,7 +1450,7 @@ class BasePlatformTracker {
                 aiProcessed: false
               });
             }
-            return; // Success!
+            return true; // Success!
           }
 
           if (attempt < MAX_RETRIES) {
@@ -969,6 +1477,10 @@ class BasePlatformTracker {
       let errorMessage = error.message;
       if (error.message.includes('Extension context invalidated')) {
         errorMessage = 'Extension was updated. Please refresh the page.';
+        this.handleInvalidContext();
+      } else if (error.message.includes('Receiving end does not exist')) {
+        errorMessage = 'Extension was updated. Please refresh the page.';
+        this.handleInvalidContext();
       }
 
       // Show error popup with correct interaction type
@@ -983,7 +1495,9 @@ class BasePlatformTracker {
           aiFailureReason: errorMessage
         });
       }
+      return false;
     }
+    return false;
   }
 
   async handleDuplicateSave(contentKey, postElement) {
@@ -1123,6 +1637,7 @@ class BasePlatformTracker {
     const force = options.force === true;
     const suppressSummary = options.suppressSummary === true;
     if (!force && !this.shouldAutoImport()) return 0;
+    if (!this.ensureExtensionContext()) return 0;
     this.cancelBulkCapture();
 
     console.log(`${this.platform}: Bulk capturing visible posts from ${this.pageMode} page`);
@@ -1253,20 +1768,109 @@ class BasePlatformTracker {
       importedFrom: this.pageMode // Track where it was imported from
     };
 
-    // Send to service worker
+    // Send to service worker if available, otherwise fallback to local storage.
+    if (Date.now() < this.runtimeUnavailableUntil) {
+      const fallbackSaved = await this.saveInteractionFallback(interaction);
+      if (fallbackSaved) {
+        console.log(`${this.platform}: Imported ${type} interaction (fallback)`);
+      }
+      return fallbackSaved;
+    }
+
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.SAVE_INTERACTION,
-        data: interaction
-      });
+      const response = await this.sendRuntimeMessageWithTimeout(
+        {
+          type: MESSAGE_TYPES.SAVE_INTERACTION,
+          data: interaction
+        },
+        1200
+      );
 
       if (response && response.success && !response.skippedDuplicate) {
         console.log(`${this.platform}: Imported ${type} interaction`);
+        const button = postElement?.querySelector?.('.ct-manual-save-btn');
+        if (button) {
+          this.setManualSaveButtonState(button, 'saved');
+        }
         return true;
       }
       return false;
     } catch (error) {
       console.error(`${this.platform}: Error saving imported interaction:`, error);
+      if (String(error?.message || '').includes('context invalidated') ||
+        String(error?.message || '').includes('Receiving end does not exist')) {
+        this.handleInvalidContext();
+      }
+      const fallbackSaved = await this.saveInteractionFallback(interaction);
+      if (fallbackSaved) {
+        console.log(`${this.platform}: Imported ${type} interaction (fallback)`);
+        const button = postElement?.querySelector?.('.ct-manual-save-btn');
+        if (button) {
+          this.setManualSaveButtonState(button, 'saved');
+        }
+      }
+      return fallbackSaved;
+    }
+  }
+
+  async saveInteractionFallback(interaction) {
+    try {
+      if (!this.ensureExtensionContext()) {
+        throw new Error('Extension context invalidated');
+      }
+      if (interaction?.categories && Array.isArray(interaction.categories)) {
+        const cleaned = interaction.categories
+          .map(cat => String(cat || '').trim())
+          .filter(Boolean);
+        interaction.categories = Array.from(new Set(cleaned)).slice(0, 3);
+      }
+
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+
+      let index = interactionIndex;
+      if (!index || typeof index !== 'object') {
+        index = {};
+      }
+      if (Object.keys(index).length === 0 && interactions.length > 0) {
+        interactions.forEach(item => {
+          if (item?.contentKey) {
+            index[item.contentKey] = item.id;
+          }
+        });
+      }
+
+      if (interaction.contentKey && index[interaction.contentKey]) {
+        return false;
+      }
+
+      interactions.unshift(interaction);
+      if (interaction.contentKey) {
+        index[interaction.contentKey] = interaction.id;
+      }
+
+      await chrome.storage.local.set({ interactions, interactionIndex: index });
+
+      // Best-effort metadata update (does not queue AI)
+      try {
+        const data = await chrome.storage.local.get(null);
+        const size = new Blob([JSON.stringify(data)]).size;
+        await chrome.storage.local.set({
+          metadata: {
+            lastSync: Date.now(),
+            totalInteractions: interactions.length,
+            storageUsed: size
+          }
+        });
+      } catch (error) {
+        console.warn(`${this.platform}: Failed to update metadata`, error);
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`${this.platform}: Fallback save failed`, error);
       return false;
     }
   }
@@ -1326,6 +1930,10 @@ class BasePlatformTracker {
     if (this.bulkCaptureTimeout) {
       clearTimeout(this.bulkCaptureTimeout);
       this.bulkCaptureTimeout = null;
+    }
+    if (this.manualSaveSweepInterval) {
+      clearInterval(this.manualSaveSweepInterval);
+      this.manualSaveSweepInterval = null;
     }
     this.trackedPosts.clear();
     this.pendingSaves.clear();

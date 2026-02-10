@@ -189,6 +189,9 @@ export class ContentRenderer {
         const card = document.createElement('div');
         card.className = 'content-card';
         card.dataset.id = item.id;
+        if (item.isFavorite) {
+            card.classList.add('favorite');
+        }
 
         // Add selection classes
         if (selectMode) {
@@ -252,6 +255,16 @@ export class ContentRenderer {
         const actions = document.createElement('div');
         actions.className = 'card-actions';
 
+        const favoriteBtn = document.createElement('button');
+        favoriteBtn.className = 'btn-icon favorite-btn';
+        favoriteBtn.innerHTML = item.isFavorite ? '★' : '☆';
+        favoriteBtn.title = item.isFavorite ? 'Remove favorite' : 'Mark as favorite';
+        favoriteBtn.setAttribute('aria-pressed', item.isFavorite ? 'true' : 'false');
+        favoriteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.dashboardManager.toggleFavorite(item.id);
+        });
+
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn-icon delete-btn';
         deleteBtn.innerHTML = '&times;';
@@ -276,6 +289,7 @@ export class ContentRenderer {
         metaInfo.appendChild(aiStatus);
         metaInfo.appendChild(dateSpan);
 
+        actions.appendChild(favoriteBtn);
         actions.appendChild(editBtn);
         if (!selectMode) {
             actions.appendChild(deleteBtn);

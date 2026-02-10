@@ -581,7 +581,7 @@ async function fetchYouTubeCaptions(videoId) {
 function parseCaptionTracks(xmlText) {
   if (!xmlText) return [];
   const tracks = [];
-  const trackMatches = xmlText.match(/<track\\b[^>]*>/g) || [];
+  const trackMatches = xmlText.match(/<track\b[^>]*>/g) || [];
   trackMatches.forEach((track) => {
     const langCode = getXmlAttr(track, 'lang_code');
     const kind = getXmlAttr(track, 'kind');
@@ -596,10 +596,10 @@ function parseCaptionText(payload) {
   if (!payload) return '';
   if (payload.includes('<text')) {
     const lines = [];
-    const textMatches = payload.match(/<text\\b[^>]*>[\\s\\S]*?<\\/text>/g) || [];
+    const textMatches = payload.match(/<text\b[^>]*>[\s\S]*?<\/text>/g) || [];
     textMatches.forEach((block) => {
-      const inner = block.replace(/<text\\b[^>]*>/, '').replace(/<\\/text>/, '');
-      const decoded = decodeHtmlEntities(inner.replace(/\\n/g, ' ').trim()).replace(/<[^>]+>/g, '');
+      const inner = block.replace(/<text\b[^>]*>/, '').replace(/<\/text>/, '');
+      const decoded = decodeHtmlEntities(inner.replace(/\n/g, ' ').trim()).replace(/<[^>]+>/g, '');
       if (decoded) lines.push(decoded);
     });
     return lines.join(' ');

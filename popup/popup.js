@@ -81,9 +81,45 @@ class PopupManager {
         document.getElementById('twitter-count').textContent = stats.byPlatform.twitter || 0;
         document.getElementById('linkedin-count').textContent = stats.byPlatform.linkedin || 0;
         document.getElementById('tiktok-count').textContent = stats.byPlatform.tiktok || 0;
+        return;
       }
     } catch (error) {
       console.error('Error loading statistics:', error);
+    }
+
+    try {
+      const { interactions = [] } = await chrome.storage.local.get('interactions');
+      const now = new Date();
+      const startOfDay = new Date(now);
+      startOfDay.setHours(0, 0, 0, 0);
+      const startOfWeek = new Date(startOfDay);
+      startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+
+      const stats = {
+        total: interactions.length,
+        today: interactions.filter(i => i.timestamp >= startOfDay.getTime()).length,
+        thisWeek: interactions.filter(i => i.timestamp >= startOfWeek.getTime()).length,
+        byPlatform: {
+          instagram: interactions.filter(i => i.platform === 'instagram').length,
+          twitter: interactions.filter(i => i.platform === 'twitter').length,
+          linkedin: interactions.filter(i => i.platform === 'linkedin').length,
+          tiktok: interactions.filter(i => i.platform === 'tiktok').length,
+          threads: interactions.filter(i => i.platform === 'threads').length,
+          youtube: interactions.filter(i => i.platform === 'youtube').length
+        }
+      };
+
+      document.getElementById('total-saved').textContent = stats.total || 0;
+      document.getElementById('today-saved').textContent = stats.today || 0;
+      document.getElementById('week-saved').textContent = stats.thisWeek || 0;
+      document.getElementById('instagram-count').textContent = stats.byPlatform.instagram || 0;
+      document.getElementById('threads-count').textContent = stats.byPlatform.threads || 0;
+      document.getElementById('youtube-count').textContent = stats.byPlatform.youtube || 0;
+      document.getElementById('twitter-count').textContent = stats.byPlatform.twitter || 0;
+      document.getElementById('linkedin-count').textContent = stats.byPlatform.linkedin || 0;
+      document.getElementById('tiktok-count').textContent = stats.byPlatform.tiktok || 0;
+    } catch (error) {
+      console.error('Error loading statistics from storage:', error);
     }
   }
 
@@ -101,9 +137,17 @@ class PopupManager {
         const recent = interactions.slice(0, 5);
 
         this.renderRecentItems(recent);
+        return;
       }
     } catch (error) {
       console.error('Error loading recent items:', error);
+    }
+    try {
+      const { interactions = [] } = await chrome.storage.local.get('interactions');
+      const recent = interactions.slice(0, 5);
+      this.renderRecentItems(recent);
+    } catch (error) {
+      console.error('Error loading recent items from storage:', error);
       this.renderEmptyState();
     }
   }
@@ -126,7 +170,12 @@ class PopupManager {
 
     if (tab?.id) {
       try {
-        const response = await this.sendTabMessage(tab.id, { type: 'GET_IMPORT_STATUS' });
+        supported = this.isSupportedUrl(tab?.url);
+        const response = await this.sendTabMessageWithTimeout(
+          tab.id,
+          { type: 'GET_IMPORT_STATUS' },
+          500
+        );
         if (response && response.success) {
           supported = true;
           pageMode = response.data?.pageMode || null;
@@ -134,6 +183,19 @@ class PopupManager {
       } catch (error) {
         supported = this.isSupportedUrl(tab?.url);
       }
+    }
+
+    this.importStatus = { supported, pageMode };
+    this.applyImportStatusUI(settings, supported, pageMode);
+  }
+
+  applyImportStatusUI(settings, supported, pageMode) {
+    const statusPill = document.getElementById('import-status');
+    const statusText = statusPill?.querySelector('.status-text');
+    const contextText = document.getElementById('import-context');
+    const toggleButton = document.getElementById('import-toggle');
+    if (!statusPill || !statusText || !contextText || !toggleButton) {
+      return;
     }
 
     const autoImportEnabled = !!settings?.autoImportSavedPages;
@@ -174,7 +236,6 @@ class PopupManager {
     toggleButton.textContent = buttonLabel;
     toggleButton.disabled = false;
     if (autoScrollButton) {
-      // Enable when we're on a supported site even if pageMode isn't detected yet.
       autoScrollButton.disabled = !supported;
     }
   }
@@ -197,19 +258,42 @@ class PopupManager {
       updates.autoImportPaused = !settings.autoImportPaused;
     }
 
-    await this.sendRuntimeMessage({ type: 'UPDATE_SETTINGS', updates });
-    await this.loadImportStatus();
-    await this.triggerImportIfActive();
+    try {
+      const { settings: stored } = await chrome.storage.local.get('settings');
+      const merged = { ...(stored || {}), ...updates };
+      await chrome.storage.local.set({ settings: merged });
+      this.currentSettings = merged;
+      this.applyImportStatusUI(merged, this.importStatus?.supported, this.importStatus?.pageMode);
+    } catch (error) {
+      console.warn('Failed to update settings via storage', error);
+    }
+
+    this.sendRuntimeMessage({ type: 'UPDATE_SETTINGS', updates })
+      .then((updateResponse) => {
+        if (!updateResponse || updateResponse.success !== true) {
+          console.warn('Runtime settings update failed', updateResponse?.error);
+        }
+      })
+      .catch(() => {});
+
+    this.loadImportStatus();
+    this.triggerImportIfActive();
   }
 
   async getSettings() {
+    try {
+      const { settings } = await chrome.storage.local.get('settings');
+      if (settings) return settings;
+    } catch (error) {
+      console.error('Error loading settings from storage:', error);
+    }
     try {
       const response = await this.sendRuntimeMessage({ type: 'GET_SETTINGS' });
       if (response && response.success) {
         return response.data;
       }
     } catch (error) {
-      console.error('Error loading settings:', error);
+      console.error('Error loading settings from runtime:', error);
     }
     return null;
   }
@@ -270,6 +354,13 @@ class PopupManager {
         resolve(response);
       });
     });
+  }
+
+  sendTabMessageWithTimeout(tabId, message, timeoutMs) {
+    return Promise.race([
+      this.sendTabMessage(tabId, message),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Tab message timeout')), timeoutMs))
+    ]);
   }
 
   queryTabs(queryInfo) {

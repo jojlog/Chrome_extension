@@ -65,23 +65,31 @@ export class FiltersManager {
 
         switch (sortBy) {
             case 'date-desc':
-                return sorted.sort((a, b) => b.timestamp - a.timestamp);
+                sorted.sort((a, b) => b.timestamp - a.timestamp);
+                break;
 
             case 'date-asc':
-                return sorted.sort((a, b) => a.timestamp - b.timestamp);
+                sorted.sort((a, b) => a.timestamp - b.timestamp);
+                break;
 
             case 'engagement':
-                return sorted.sort((a, b) => {
+                sorted.sort((a, b) => {
                     const engA = (a.metadata.likes || 0) + (a.metadata.comments || 0);
                     const engB = (b.metadata.likes || 0) + (b.metadata.comments || 0);
                     return engB - engA;
                 });
+                break;
 
             case 'duration':
-                return sorted.sort((a, b) => (b.viewDuration || 0) - (a.viewDuration || 0));
+                sorted.sort((a, b) => (b.viewDuration || 0) - (a.viewDuration || 0));
+                break;
 
             default:
-                return sorted;
+                break;
         }
+
+        const favorites = sorted.filter(item => item.isFavorite);
+        const nonFavorites = sorted.filter(item => !item.isFavorite);
+        return favorites.concat(nonFavorites);
     }
 }
