@@ -2020,3 +2020,142 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(90, 70, 54, 0.45);
 }
+
+/* AI Categorization Progress Indicator */
+.ai-progress-indicator {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: slideIn 0.3s ease-out;
+  transition: top 0.3s ease-out;
+  max-width: 320px;
+}
+
+.ai-progress-indicator.hidden {
+  display: none;
+}
+
+.ai-progress-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ai-progress-text {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.ai-progress-icon {
+  font-size: 20px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.ai-progress-text strong {
+  color: var(--accent);
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.ai-progress-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-cancel-btn {
+  padding: 8px 16px;
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-cancel-btn:hover:not(:disabled) {
+  background: var(--bg-strong);
+  border-color: var(--accent);
+}
+
+.ai-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ai-refresh-btn {
+  padding: 8px 16px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.ai-refresh-btn:hover {
+  background: var(--accent-strong);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(197, 107, 42, 0.3);
+}
+
+.ai-refresh-btn.hidden {
+  display: none;
+}
+
+/* Animations */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse {
+
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .ai-progress-indicator {
+    right: 12px;
+    top: 70px;
+    min-width: 240px;
+    padding: 12px 16px;
+  }
+
+  .ai-progress-text {
+    font-size: 13px;
+  }
+
+  .ai-progress-icon {
+    font-size: 18px;
+  }
+}

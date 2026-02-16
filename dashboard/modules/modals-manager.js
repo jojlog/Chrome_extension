@@ -53,7 +53,13 @@ export class ModalsManager {
         }
         document.getElementById('auto-import-saved').checked = settings.autoImportSavedPages === true;
         document.getElementById('suppress-import-notifications').checked = settings.suppressImportNotifications !== false;
-        document.getElementById('skip-ai-for-imports').checked = settings.skipAIForImports !== false;
+        document.getElementById('skip-ai-for-imports').checked = settings.skipAIForImports === true;
+        document.getElementById('enable-fast-scroll').checked = settings.enableFastScroll !== false;
+
+        // Auto-scroll limit (default 200 if not set)
+        if (settings.autoScrollLimit) {
+            document.getElementById('auto-scroll-limit').value = Math.min(Math.max(1, settings.autoScrollLimit), 200);
+        }
 
         this.renderCustomCategories(userCategories);
 
@@ -80,6 +86,8 @@ export class ModalsManager {
     }
 
     async saveSettings() {
+        const autoScrollLimit = parseInt(document.getElementById('auto-scroll-limit').value) || 200;
+
         const updates = {
             openaiApiKey: document.getElementById('openai-api-key').value.trim(),
             geminiApiKey: document.getElementById('gemini-api-key').value.trim(),
@@ -94,7 +102,9 @@ export class ModalsManager {
             },
             autoImportSavedPages: document.getElementById('auto-import-saved').checked,
             suppressImportNotifications: document.getElementById('suppress-import-notifications').checked,
-            skipAIForImports: document.getElementById('skip-ai-for-imports').checked
+            skipAIForImports: document.getElementById('skip-ai-for-imports').checked,
+            enableFastScroll: document.getElementById('enable-fast-scroll').checked,
+            autoScrollLimit: Math.min(Math.max(1, autoScrollLimit), 200) // Validate and cap at 200
         };
 
         await this.dashboardManager.saveSettings(updates);

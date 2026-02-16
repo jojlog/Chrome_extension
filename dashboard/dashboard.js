@@ -49,6 +49,17 @@ class DashboardManager {
     this.thumbnailBackfillActive = false;
     this.instagramUrlCleanupRan = false;
 
+    // AI Progress tracking
+    this.aiProgressState = {
+      active: false,
+      current: 0,
+      total: 0,
+      needsRefresh: false,
+      affectedCategories: new Set(),
+      cancelled: false
+    };
+    this.aiProgressUnregister = null;
+
     // Bulk selection mode
     this.selectMode = false;
     this.selectedItems = new Set();
@@ -67,6 +78,7 @@ class DashboardManager {
 
     // Setup listeners
     this.setupEventListeners();
+    this.setupAIProgressListener();
     this.updateViewToggleLabel();
     this.exposeDebugHelpers();
 
@@ -188,7 +200,7 @@ class DashboardManager {
         type: 'UPDATE_INTERACTION',
         id,
         updates: data
-      }).catch(() => {});
+      }).catch(() => { });
     });
   }
 
@@ -728,6 +740,179 @@ class DashboardManager {
     });
   }
 
+  /**
+   * Setup listener for AI progress messages from background worker
+   */
+  setupAIProgressListener() {
+    chrome.runtime.onMessage.addListener((message) => {
+      switch (message.type) {
+        case 'AI_CATEGORIZATION_STARTED':
+          this.showAIProgress(0, message.total);
+          break;
+
+        case 'AI_CATEGORIZATION_PROGRESS':
+          this.updateAIProgress(message.current, message.total);
+          break;
+
+        case 'AI_CATEGORIZATION_CATEGORY_UPDATED':
+          this.handleCategoryUpdated(message.category);
+          break;
+
+        case 'AI_CATEGORIZATION_COMPLETE':
+          this.completeAIProgress(
+            message.successful,
+            message.failed,
+            message.total,
+            message.cancelled
+          );
+          break;
+
+        case 'AI_CATEGORIZATION_CANCELLED':
+          this.completeAIProgress(
+            message.successful,
+            0,
+            message.total,
+            true
+          );
+          break;
+      }
+    });
+  }
+
+  /**
+   * Show AI progress indicator
+   */
+  showAIProgress(current, total) {
+    this.aiProgressState.active = true;
+    this.aiProgressState.current = current;
+    this.aiProgressState.total = total;
+    this.aiProgressState.cancelled = false;
+
+    const indicator = document.getElementById('ai-categorization-progress');
+    const countSpan = document.getElementById('ai-progress-count');
+    const cancelBtn = document.getElementById('ai-cancel-btn');
+
+    if (indicator && countSpan) {
+      indicator.classList.remove('hidden');
+      countSpan.textContent = `${current}/${total}`;
+
+      // Setup cancel button
+      if (cancelBtn) {
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = () => this.cancelAICategorization();
+      }
+
+      // Register with notification manager for vertical stacking
+      this.aiProgressUnregister = notificationManager.register(indicator);
+    }
+  }
+
+  /**
+   * Update AI progress count
+   */
+  updateAIProgress(current, total) {
+    this.aiProgressState.current = current;
+    const countSpan = document.getElementById('ai-progress-count');
+    if (countSpan) {
+      countSpan.textContent = `${current}/${total}`;
+    }
+  }
+
+  /**
+   * Handle category updated notification
+   */
+  handleCategoryUpdated(category) {
+    this.aiProgressState.affectedCategories.add(category);
+
+    // Check if current filter matches updated category
+    const currentIncludes = this.currentFilters.includeCategories || [];
+    const currentExcludes = this.currentFilters.excludeCategories || [];
+
+    if (currentIncludes.includes(category) || currentExcludes.includes(category)) {
+      this.showRefreshSuggestion();
+    }
+  }
+
+  /**
+   * Show refresh suggestion button
+   */
+  showRefreshSuggestion() {
+    this.aiProgressState.needsRefresh = true;
+    const refreshBtn = document.getElementById('ai-refresh-suggestion');
+    if (refreshBtn) {
+      refreshBtn.classList.remove('hidden');
+      refreshBtn.onclick = () => {
+        this.filterAndDisplayContent();
+        refreshBtn.classList.add('hidden');
+        this.aiProgressState.needsRefresh = false;
+      };
+    }
+  }
+
+  /**
+   * Cancel AI categorization
+   */
+  async cancelAICategorization() {
+    this.aiProgressState.cancelled = true;
+
+    const cancelBtn = document.getElementById('ai-cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = 'Cancelling...';
+    }
+
+    // Send cancel message to background
+    try {
+      await chrome.runtime.sendMessage({ type: 'CANCEL_AI_CATEGORIZATION' });
+    } catch (error) {
+      console.error('Error cancelling AI categorization:', error);
+    }
+  }
+
+  /**
+   * Complete AI progress and hide indicator
+   */
+  completeAIProgress(successful, failed, total, cancelled = false) {
+    // Show final count for 2 seconds
+    setTimeout(() => {
+      const indicator = document.getElementById('ai-categorization-progress');
+      if (indicator) {
+        indicator.classList.add('hidden');
+
+        // Unregister from notification manager
+        if (this.aiProgressUnregister) {
+          this.aiProgressUnregister();
+          this.aiProgressUnregister = null;
+        }
+      }
+
+      this.aiProgressState.active = false;
+
+      // Show appropriate completion message
+      let message;
+      if (cancelled) {
+        message = `AI categorization cancelled. Processed ${successful} items before stopping.`;
+      } else if (failed > 0) {
+        message = `AI categorization complete: ${successful} successful, ${failed} failed`;
+      } else {
+        message = `AI categorization complete: ${successful} items categorized`;
+      }
+
+      alert(message);
+
+      // Auto-refresh if needed
+      if (this.aiProgressState.needsRefresh) {
+        this.filterAndDisplayContent();
+        this.aiProgressState.needsRefresh = false;
+        const refreshBtn = document.getElementById('ai-refresh-suggestion');
+        if (refreshBtn) {
+          refreshBtn.classList.add('hidden');
+        }
+      }
+    }, 2000);
+  }
+
   async categorizeUncategorizedWithAI() {
     const items = this.getUncategorizedItems();
     if (items.length === 0) {
@@ -755,11 +940,15 @@ class DashboardManager {
     if (!confirmed) return;
 
     try {
+      // Initialize progress state
+      this.aiProgressState.affectedCategories.clear();
+      this.aiProgressState.needsRefresh = false;
+
       for (const item of items) {
         await this.storage.queueForAI(item.id);
       }
       await chrome.runtime.sendMessage({ type: 'PROCESS_AI_QUEUE' });
-      alert(`Queued ${items.length} items for AI categorization.`);
+      // Don't show alert - let the progress indicator handle it
     } catch (error) {
       console.error('Error queueing AI categorization:', error);
       alert('Failed to queue AI categorization: ' + error.message);
@@ -1496,6 +1685,7 @@ class DashboardManager {
       return;
     }
     imgEl.referrerPolicy = 'no-referrer';
+    imgEl.crossOrigin = 'anonymous';
     imgEl.src = url;
 
     const onError = async () => {
@@ -1530,7 +1720,7 @@ class DashboardManager {
   shouldAvoidRemoteImage(url) {
     try {
       const host = new URL(url).hostname;
-      return host.includes('instagram') || host.includes('cdninstagram') || host.includes('fbcdn.net');
+      return host.includes('instagram') || host.includes('cdninstagram') || host.includes('fbcdn.net') || host.includes('twimg.com');
     } catch (error) {
       return false;
     }
@@ -1805,6 +1995,68 @@ class DashboardManager {
     }
   }
 
+  async importData(file) {
+    try {
+      if (!file) {
+        alert('Please select a file to import.');
+        return;
+      }
+
+      if (!file.name.endsWith('.json')) {
+        alert('Invalid file type. Please select a JSON file.');
+        return;
+      }
+
+      const confirmed = confirm(
+        '⚠️ WARNING: Importing data will REPLACE all current data.\n\n' +
+        'Your current interactions, categories, and settings will be overwritten.\n\n' +
+        'Are you sure you want to continue?'
+      );
+
+      if (!confirmed) return;
+
+      // Read the file
+      const fileContent = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsText(file);
+      });
+
+      // Parse and validate JSON
+      let importedData;
+      try {
+        importedData = JSON.parse(fileContent);
+      } catch (parseError) {
+        alert('Invalid JSON file. Please select a valid export file.');
+        return;
+      }
+
+      // Send to service worker for import
+      const response = await chrome.runtime.sendMessage({
+        type: 'IMPORT_DATA',
+        data: importedData
+      });
+
+      if (response && response.success) {
+        alert(
+          `✅ Import successful!\n\n` +
+          `Imported ${response.stats.interactions || 0} interactions\n` +
+          `Imported ${response.stats.categories || 0} categories\n` +
+          `Imported ${response.stats.accounts || 0} accounts`
+        );
+
+        // Reload the page to reflect imported data
+        window.location.reload();
+      } else {
+        alert('Import failed: ' + (response?.error || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error importing data:', error);
+      alert('Import failed: ' + error.message);
+    }
+  }
+
   setupEventListeners() {
     // Search
     document.getElementById('search-input')?.addEventListener('input', (e) => {
@@ -1898,9 +2150,24 @@ class DashboardManager {
       this.showSettingsModal();
     });
 
+
     document.getElementById('export-btn')?.addEventListener('click', () => {
       this.exportData();
     });
+
+    document.getElementById('import-btn')?.addEventListener('click', () => {
+      document.getElementById('import-file-input')?.click();
+    });
+
+    document.getElementById('import-file-input')?.addEventListener('change', (e) => {
+      const file = e.target.files?.[0];
+      if (file) {
+        this.importData(file);
+        // Reset input so same file can be selected again
+        e.target.value = '';
+      }
+    });
+
 
     // AI Tools
     const aiFab = document.getElementById('ai-fab');

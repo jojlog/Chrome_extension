@@ -98,11 +98,20 @@ async function handleMessage(message, sender) {
     case 'GET_CATEGORIES':
       return await handleGetCategories();
 
+
     case 'EXPORT_DATA':
       return await handleExportData();
 
+    case 'IMPORT_DATA':
+      return await handleImportData(message.data);
+
+
     case 'PROCESS_AI_QUEUE':
       return await handleProcessAIQueue();
+
+    case 'CANCEL_AI_CATEGORIZATION':
+      shouldCancelAI = true;
+      return { success: true };
 
     case 'GET_USER_CATEGORIES':
       return await handleGetUserCategories();
@@ -195,7 +204,7 @@ async function handleFetchInstagramCaption(url) {
       return { success: false, error: 'Missing URL' };
     }
     const response = await fetch(url, {
-      credentials: 'include',
+      credentials: 'omit',
       cache: 'no-store'
     });
     if (!response.ok) {
@@ -216,7 +225,7 @@ async function handleFetchPostThumbnail(url) {
       return { success: false, error: 'Missing URL' };
     }
     const response = await fetch(url, {
-      credentials: 'include',
+      credentials: 'omit',
       cache: 'no-store'
     });
     if (!response.ok) {
@@ -307,7 +316,7 @@ async function handleInjectTikTokHook(sender) {
                 const clone = response.clone();
                 const contentType = clone.headers.get('content-type') || '';
                 if (contentType.includes('application/json')) {
-                  clone.json().then((data) => postItems(extractItems(data))).catch(() => {});
+                  clone.json().then((data) => postItems(extractItems(data))).catch(() => { });
                 } else {
                   clone.text().then((text) => {
                     try {
@@ -315,7 +324,7 @@ async function handleInjectTikTokHook(sender) {
                     } catch (error) {
                       // ignore
                     }
-                  }).catch(() => {});
+                  }).catch(() => { });
                 }
               }
             } catch (error) {
@@ -635,14 +644,16 @@ async function cacheInteractionPreview(interaction) {
 }
 
 async function fetchImageAsDataUrl(url) {
+  // Use 'omit' for credentials - CDN images (e.g. pbs.twimg.com) don't support
+  // credentialed CORS requests and will block with 'include' mode
   let response = await fetch(url, {
-    credentials: 'include',
+    credentials: 'omit',
     cache: 'no-store'
   });
 
   if (!response.ok) {
     response = await fetch(withCacheBuster(url), {
-      credentials: 'include',
+      credentials: 'omit',
       cache: 'no-store'
     });
   }
@@ -1020,6 +1031,106 @@ async function handleExportData() {
 }
 
 /**
+ * Import data from exported JSON
+ */
+async function handleImportData(importedData) {
+  try {
+    if (!importedData || typeof importedData !== 'object') {
+      return { success: false, error: 'Invalid data format' };
+    }
+
+    // Validate that this looks like an export file
+    const hasValidStructure =
+      importedData.hasOwnProperty('interactions') ||
+      importedData.hasOwnProperty('settings') ||
+      importedData.hasOwnProperty('userCategories') ||
+      importedData.hasOwnProperty('metadata');
+
+    if (!hasValidStructure) {
+      return {
+        success: false,
+        error: 'File does not appear to be a valid export. Missing expected data structure.'
+      };
+    }
+
+    // Statistics for feedback
+    const stats = {
+      interactions: 0,
+      categories: 0,
+      accounts: 0,
+      settings: false
+    };
+
+    // Import interactions (for all platforms: Instagram, Twitter, LinkedIn, TikTok, Threads, YouTube)
+    if (Array.isArray(importedData.interactions)) {
+      await chrome.storage.local.set({ interactions: importedData.interactions });
+      stats.interactions = importedData.interactions.length;
+      console.log(`Imported ${stats.interactions} interactions`);
+    }
+
+    // Import interaction index
+    if (importedData.interactionIndex && typeof importedData.interactionIndex === 'object') {
+      await chrome.storage.local.set({ interactionIndex: importedData.interactionIndex });
+    }
+
+    // Import user categories
+    if (Array.isArray(importedData.userCategories)) {
+      await chrome.storage.local.set({ userCategories: importedData.userCategories });
+      stats.categories = importedData.userCategories.length;
+      console.log(`Imported ${stats.categories} user categories`);
+    }
+
+    // Import user accounts
+    if (importedData.userAccounts && typeof importedData.userAccounts === 'object') {
+      await chrome.storage.local.set({ userAccounts: importedData.userAccounts });
+      // Count total accounts across all platforms
+      stats.accounts = Object.values(importedData.userAccounts).reduce((sum, platformAccounts) => {
+        return sum + (Array.isArray(platformAccounts) ? platformAccounts.length : 0);
+      }, 0);
+      console.log(`Imported ${stats.accounts} user accounts`);
+    }
+
+    // Import settings (merge with defaults to ensure compatibility)
+    if (importedData.settings && typeof importedData.settings === 'object') {
+      const defaultSettings = storageManager.getDefaultSettings();
+      const mergedSettings = { ...defaultSettings, ...importedData.settings };
+      await chrome.storage.local.set({ settings: mergedSettings });
+      stats.settings = true;
+      console.log('Imported settings');
+    }
+
+    // Import metadata
+    if (importedData.metadata && typeof importedData.metadata === 'object') {
+      await chrome.storage.local.set({ metadata: importedData.metadata });
+    }
+
+    // Import AI queue if present
+    if (Array.isArray(importedData.aiQueue)) {
+      await chrome.storage.local.set({ aiQueue: importedData.aiQueue });
+    }
+
+    // Import auto-scroll daily count if present
+    if (importedData.autoScrollDailyCount && typeof importedData.autoScrollDailyCount === 'object') {
+      await chrome.storage.local.set({ autoScrollDailyCount: importedData.autoScrollDailyCount });
+    }
+
+    // Update metadata to reflect the import
+    await storageManager.updateMetadata();
+
+    console.log('Import completed successfully', stats);
+
+    return {
+      success: true,
+      stats,
+      message: 'Data imported successfully'
+    };
+  } catch (error) {
+    console.error('Error importing data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
  * Process AI queue
  */
 async function handleProcessAIQueue() {
@@ -1028,9 +1139,33 @@ async function handleProcessAIQueue() {
 }
 
 /**
+ * Helper: Find dashboard tab(s)
+ */
+async function findDashboardTabs() {
+  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
+  return tabs.map(tab => tab.id);
+}
+
+/**
+ * Helper: Send progress message to all dashboard tabs
+ */
+async function sendProgressToDashboard(type, payload) {
+  const tabIds = await findDashboardTabs();
+  for (const tabId of tabIds) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type, ...payload });
+    } catch (error) {
+      console.warn('Could not send message to dashboard tab:', error);
+    }
+  }
+}
+
+
+/**
  * Process AI categorization queue (background task)
  */
 let isProcessing = false;
+let shouldCancelAI = false;
 
 async function processAIQueue() {
   // Prevent concurrent processing
@@ -1040,6 +1175,7 @@ async function processAIQueue() {
   }
 
   isProcessing = true;
+  shouldCancelAI = false; // Reset cancellation flag
 
   try {
     // Reinitialize AI categorizer to get latest settings
@@ -1055,103 +1191,179 @@ async function processAIQueue() {
 
     console.log(`Processing AI queue: ${queue.length} items`);
 
+    // Send start message to dashboard
+    await sendProgressToDashboard('AI_CATEGORIZATION_STARTED', { total: queue.length });
+
     // Fetch existing categories with usage counts for smarter AI categorization
     const existingCategories = await storageManager.getCategoriesWithUsage();
     console.log(`Loaded ${existingCategories.length} categories for AI context`);
 
     // Process in batches of 5
     const batchSize = 5;
-    const batch = queue.slice(0, batchSize);
+    let totalProcessed = 0;
+    let totalSuccessful = 0;
+    let totalFailed = 0;
 
-    const processedIds = [];
+    // Process all items in batches
+    while (totalProcessed < queue.length) {
+      const batch = queue.slice(totalProcessed, totalProcessed + batchSize);
+      const processedIds = [];
 
-    for (const interactionId of batch) {
-      try {
-        const interaction = await storageManager.getInteractionById(interactionId);
+      for (const interactionId of batch) {
+        // Check cancellation before each item
+        if (shouldCancelAI) {
+          console.log('AI categorization cancelled by user');
+          break;
+        }
 
-        // Skip if already processed or not found
-        if (!interaction || interaction.aiProcessed) {
+        try {
+          const interaction = await storageManager.getInteractionById(interactionId);
+
+          // Skip if already processed or not found
+          if (!interaction || interaction.aiProcessed) {
+            processedIds.push(interactionId);
+            totalProcessed++;
+            continue;
+          }
+
+          // Categorize with AI, passing existing categories for context
+          console.log(`Categorizing interaction: ${interactionId}`);
+          const { categories, failureReason } = await aiCategorizer.categorizeContent(interaction, existingCategories);
+
+          // Update interaction with categories
+          await storageManager.updateInteraction(interactionId, {
+            categories: categories,
+            aiProcessed: true,
+            aiFailureReason: failureReason || null, // Store failure reason
+          });
+
+          // Track success/failure
+          if (failureReason) {
+            totalFailed++;
+          } else {
+            totalSuccessful++;
+
+            // Send category update notification for each new category
+            for (const category of categories) {
+              await sendProgressToDashboard('AI_CATEGORIZATION_CATEGORY_UPDATED', {
+                category: category,
+                itemId: interactionId
+              });
+            }
+          }
+
+          // Notify content script of AI categorization result
+          // Note: Save already succeeded, we're just updating with AI results
+          try {
+            if (interaction.tabId) {
+              await chrome.tabs.sendMessage(interaction.tabId, {
+                type: 'INTERACTION_SAVED_STATUS',
+                success: !failureReason,
+                saveSuccess: true, // Save was successful (we're just updating AI status)
+                interactionType: interaction.interactionType,
+                platform: interaction.platform,
+                categories: categories, // categories is already an array
+                aiProcessed: true,
+                aiFailureReason: failureReason || null,
+              });
+            }
+          } catch (tabError) {
+            console.warn('Could not notify tab:', tabError);
+          }
+
           processedIds.push(interactionId);
-          continue;
-        }
+          totalProcessed++;
+          console.log(`Categorized as: ${categories.join(', ')}`);
 
-        // Categorize with AI, passing existing categories for context
-        console.log(`Categorizing interaction: ${interactionId}`);
-        const { categories, failureReason } = await aiCategorizer.categorizeContent(interaction, existingCategories);
+          // Send progress update
+          await sendProgressToDashboard('AI_CATEGORIZATION_PROGRESS', {
+            current: totalProcessed,
+            total: queue.length,
+            itemId: interactionId
+          });
 
-        // Update interaction with categories
-        await storageManager.updateInteraction(interactionId, {
-          categories: categories,
-          aiProcessed: true,
-          aiFailureReason: failureReason || null, // Store failure reason
-        });
+        } catch (error) {
+          console.error(`Error processing interaction ${interactionId}:`, error);
+          totalFailed++;
+          totalProcessed++;
 
-        // Notify content script of AI categorization result
-        // Note: Save already succeeded, we're just updating with AI results
-        try {
-          if (interaction.tabId) {
-            chrome.tabs.sendMessage(interaction.tabId, {
-              type: 'INTERACTION_SAVED_STATUS',
-              success: !failureReason,
-              saveSuccess: true, // Save was successful (we're just updating AI status)
-              interactionType: interaction.interactionType,
-              platform: interaction.platform,
-              categories: categories, // categories is already an array
-              aiProcessed: true,
-              aiFailureReason: failureReason || null,
-            });
+          // Store failure reason for the interaction
+          await storageManager.updateInteraction(interactionId, {
+            aiProcessed: false,
+            aiFailureReason: error.message,
+          });
+
+          // Send progress update even on failure
+          await sendProgressToDashboard('AI_CATEGORIZATION_PROGRESS', {
+            current: totalProcessed,
+            total: queue.length,
+            itemId: interactionId
+          });
+
+          // Notify content script of AI categorization failure
+          // Note: Save already succeeded, only AI categorization failed
+          try {
+            if (interaction?.tabId) {
+              await chrome.tabs.sendMessage(interaction.tabId, {
+                type: 'INTERACTION_SAVED_STATUS',
+                success: false,
+                saveSuccess: true, // Save was successful (only AI failed)
+                interactionType: interaction.interactionType,
+                platform: interaction.platform,
+                categories: ['Uncategorized'],
+                aiProcessed: false,
+                aiFailureReason: error.message,
+              });
+            }
+          } catch (tabError) {
+            console.warn('Could not notify tab of error:', tabError);
           }
-        } catch (tabError) {
-          console.warn('Could not notify tab:', tabError);
+          // Continue with next item instead of failing entire batch
         }
+      }
 
-        processedIds.push(interactionId);
-        console.log(`Categorized as: ${categories.join(', ')}`);
-      } catch (error) {
-        console.error(`Error processing interaction ${interactionId}:`, error);
-        // Store failure reason for the interaction
-        await storageManager.updateInteraction(interactionId, {
-          aiProcessed: false,
-          aiFailureReason: error.message,
-        });
+      // Remove processed items from queue
+      await storageManager.removeFromAIQueue(processedIds);
 
-        // Notify content script of AI categorization failure
-        // Note: Save already succeeded, only AI categorization failed
-        try {
-          if (interaction?.tabId) {
-            chrome.tabs.sendMessage(interaction.tabId, {
-              type: 'INTERACTION_SAVED_STATUS',
-              success: false,
-              saveSuccess: true, // Save was successful (only AI failed)
-              interactionType: interaction.interactionType,
-              platform: interaction.platform,
-              categories: ['Uncategorized'],
-              aiProcessed: false,
-              aiFailureReason: error.message,
-            });
-          }
-        } catch (tabError) {
-          console.warn('Could not notify tab of error:', tabError);
-        }
-        // Continue with next item instead of failing entire batch
+      // Check cancellation before next batch
+      if (shouldCancelAI) {
+        break;
+      }
+
+      // Small delay between batches
+      if (totalProcessed < queue.length) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
     }
 
-    // Remove processed items from queue
-    await storageManager.removeFromAIQueue(processedIds);
-
-    // If there are more items, schedule next batch
-    const remainingQueue = await storageManager.getAIQueue();
-    if (remainingQueue.length > 0) {
-      console.log(`Scheduling next batch: ${remainingQueue.length} items remaining`);
-      setTimeout(processAIQueue, 2000); // Wait 2 seconds before next batch
+    // Send appropriate completion message
+    if (shouldCancelAI) {
+      await sendProgressToDashboard('AI_CATEGORIZATION_CANCELLED', {
+        successful: totalSuccessful,
+        total: queue.length
+      });
+      console.log('AI queue processing cancelled');
     } else {
+      await sendProgressToDashboard('AI_CATEGORIZATION_COMPLETE', {
+        total: totalProcessed,
+        successful: totalSuccessful,
+        failed: totalFailed
+      });
       console.log('AI queue processing complete');
     }
   } catch (error) {
     console.error('Error processing AI queue:', error);
+
+    // Send error completion message
+    await sendProgressToDashboard('AI_CATEGORIZATION_COMPLETE', {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      error: error.message
+    });
   } finally {
     isProcessing = false;
+    shouldCancelAI = false; // Reset flag
   }
 }
 

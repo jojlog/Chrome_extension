@@ -43,6 +43,8 @@
       <div class="sidebar-footer">
         <button id="settings-btn" class="btn-sidebar">Settings</button>
         <button id="export-btn" class="btn-sidebar">Export Data</button>
+        <button id="import-btn" class="btn-sidebar">Import Data</button>
+        <input type="file" id="import-file-input" accept=".json" style="display: none;">
       </div>
     </aside>
 
@@ -51,8 +53,7 @@
       <header class="dashboard-header">
         <div class="search-bar">
           <input type="text" id="search-input" placeholder="Search saved content...">
-          <button id="category-filter-btn" class="btn-secondary search-filter-btn" type="button"
-            aria-expanded="false">
+          <button id="category-filter-btn" class="btn-secondary search-filter-btn" type="button" aria-expanded="false">
             <span class="search-filter-label">Filter</span>
             <span id="category-filter-count" class="search-filter-count hidden">0</span>
           </button>
@@ -179,8 +180,17 @@
                 <label><input type="checkbox" id="auto-import-saved"> Auto-import from saved/liked pages</label>
                 <label><input type="checkbox" id="suppress-import-notifications"> Suppress import notifications</label>
                 <label><input type="checkbox" id="skip-ai-for-imports"> Skip AI categorization for imports</label>
+                <label><input type="checkbox" id="enable-fast-scroll" checked> Enable auto-speed up when scrolling
+                  through saved posts</label>
               </div>
               <small>Imports only run when you visit saved/liked pages and can be noisy without these controls.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="auto-scroll-limit">Auto-Scroll Limit (per session)</label>
+              <input type="number" id="auto-scroll-limit" min="1" max="200" value="200">
+              <small>Maximum posts to process per session (max 200). Counts both newly saved and already-saved posts.
+                The extension will show saved and skipped counts separately.</small>
             </div>
 
             <div class="form-group">
@@ -338,6 +348,21 @@
     </div>
   </div>
 
+  <!-- AI Categorization Progress Indicator -->
+  <div id="ai-categorization-progress" class="ai-progress-indicator hidden">
+    <div class="ai-progress-content">
+      <div class="ai-progress-text">
+        <span class="ai-progress-icon">🤖</span>
+        <span>AI Categorizing: <strong id="ai-progress-count">0/0</strong></span>
+      </div>
+      <div class="ai-progress-actions">
+        <button id="ai-cancel-btn" class="ai-cancel-btn">Cancel</button>
+        <button id="ai-refresh-suggestion" class="ai-refresh-btn hidden">Refresh to see updates</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="notification-manager.js"></script>
   <script src="dashboard.js" type="module"></script>
 </body>
 

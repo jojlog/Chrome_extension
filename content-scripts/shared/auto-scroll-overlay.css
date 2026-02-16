@@ -11,6 +11,7 @@
   font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
   color: #2a241f;
   z-index: 2147483647;
+  pointer-events: auto;
 }
 
 .ct-auto-scroll-header {
@@ -104,6 +105,7 @@
   font-size: 11px;
   font-weight: 600;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .ct-auto-scroll-btn:disabled {
