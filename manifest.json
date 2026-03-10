@@ -3,7 +3,6 @@
   "name": "Social Media Content Tracker",
   "version": "1.0.0",
   "description": "Automatically track, save, and categorize your social media interactions across Instagram, Twitter, LinkedIn, and TikTok",
-
   "permissions": [
     "storage",
     "unlimitedStorage",
@@ -12,13 +11,13 @@
     "notifications",
     "alarms"
   ],
-
   "host_permissions": [
     "https://www.instagram.com/*",
     "https://*.cdninstagram.com/*",
     "https://*.fbcdn.net/*",
     "https://twitter.com/*",
     "https://x.com/*",
+    "https://*.twimg.com/*",
     "https://www.linkedin.com/*",
     "https://www.tiktok.com/*",
     "https://www.youtube.com/*",
@@ -29,15 +28,15 @@
     "https://www.instagram.com/threads/*",
     "https://instagram.com/threads/*"
   ],
-
   "background": {
     "service_worker": "background/service-worker.js",
     "type": "module"
   },
-
   "content_scripts": [
     {
-      "matches": ["https://www.instagram.com/*"],
+      "matches": [
+        "https://www.instagram.com/*"
+      ],
       "js": [
         "content-scripts/shared/status-popup.js",
         "content-scripts/shared/time-tracker.js",
@@ -54,7 +53,10 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://twitter.com/*", "https://x.com/*"],
+      "matches": [
+        "https://twitter.com/*",
+        "https://x.com/*"
+      ],
       "js": [
         "content-scripts/shared/status-popup.js",
         "content-scripts/shared/time-tracker.js",
@@ -71,7 +73,9 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.linkedin.com/*"],
+      "matches": [
+        "https://www.linkedin.com/*"
+      ],
       "js": [
         "content-scripts/shared/status-popup.js",
         "content-scripts/shared/time-tracker.js",
@@ -88,7 +92,9 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.tiktok.com/*"],
+      "matches": [
+        "https://www.tiktok.com/*"
+      ],
       "js": [
         "content-scripts/shared/status-popup.js",
         "content-scripts/shared/time-tracker.js",
@@ -129,7 +135,9 @@
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://www.youtube.com/*"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
       "js": [
         "content-scripts/shared/status-popup.js",
         "content-scripts/shared/time-tracker.js",
@@ -146,7 +154,6 @@
       "run_at": "document_idle"
     }
   ],
-
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {
@@ -156,18 +163,20 @@
       "128": "assets/icons/icon128.png"
     }
   },
-
   "icons": {
     "16": "assets/icons/icon16.png",
     "32": "assets/icons/icon32.png",
     "48": "assets/icons/icon48.png",
     "128": "assets/icons/icon128.png"
   },
-
   "web_accessible_resources": [
     {
-      "resources": ["assets/*"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "assets/*"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ]
 }

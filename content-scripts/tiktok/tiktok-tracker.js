@@ -1126,28 +1126,38 @@ class TikTokTracker extends BasePlatformTracker {
     const hasSnapshotKey = Object.prototype.hasOwnProperty.call(data, 'contentKey');
     const contentKey = hasSnapshotKey ? data.contentKey : ContentExtractor.createContentKey(this.platform, content.url, content.text);
 
-    try {
-      const existing = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
-        contentKey
-      });
+    if (Date.now() < this.runtimeUnavailableUntil) {
+      // Skip duplicate lookup when runtime is unavailable.
+    } else {
+      try {
+        const existing = await this.sendRuntimeMessageWithTimeout(
+          {
+            type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
+            contentKey
+          },
+          1200
+        );
       const existingInteraction = existing?.success ? existing.data : null;
       if (existingInteraction?.id) {
         const mergedType = this.mergeInteractionTypes(existingInteraction.interactionType, type);
         if (mergedType !== existingInteraction.interactionType) {
-          await chrome.runtime.sendMessage({
-            type: MESSAGE_TYPES.UPDATE_INTERACTION,
-            id: existingInteraction.id,
-            updates: {
-              interactionType: mergedType,
-              importedFrom: existingInteraction.importedFrom || this.pageMode || 'feed'
-            }
-          });
+            await this.sendRuntimeMessageWithTimeout(
+              {
+                type: MESSAGE_TYPES.UPDATE_INTERACTION,
+                id: existingInteraction.id,
+                updates: {
+                  interactionType: mergedType,
+                  importedFrom: existingInteraction.importedFrom || this.pageMode || 'feed'
+                }
+              },
+              1200
+            );
         }
         return false;
       }
-    } catch (error) {
-      // Ignore duplicate lookup errors and fall back to save.
+      } catch (error) {
+        // Ignore duplicate lookup errors and fall back to save.
+      }
     }
 
     const interaction = {
@@ -1168,11 +1178,18 @@ class TikTokTracker extends BasePlatformTracker {
       importedFrom: this.pageMode || 'feed'
     };
 
+    if (Date.now() < this.runtimeUnavailableUntil) {
+      return await this.saveInteractionFallback(interaction);
+    }
+
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.SAVE_INTERACTION,
-        data: interaction
-      });
+      const response = await this.sendRuntimeMessageWithTimeout(
+        {
+          type: MESSAGE_TYPES.SAVE_INTERACTION,
+          data: interaction
+        },
+        1200
+      );
 
       if (response && response.success && !response.skippedDuplicate) {
         return true;
@@ -1180,7 +1197,7 @@ class TikTokTracker extends BasePlatformTracker {
       return false;
     } catch (error) {
       console.error(`${this.platform}: Error saving imported interaction:`, error);
-      return false;
+      return await this.saveInteractionFallback(interaction);
     }
   }
 

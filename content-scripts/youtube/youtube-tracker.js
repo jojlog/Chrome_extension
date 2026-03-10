@@ -14,8 +14,6 @@ if (!window.YouTubeSelectors) {
 class YouTubeTracker extends BasePlatformTracker {
   constructor() {
     super('youtube');
-    this.lastActionPost = null;
-    this.lastActionTimestamp = 0;
   }
 
   async init() {
@@ -34,15 +32,6 @@ class YouTubeTracker extends BasePlatformTracker {
 
   handleClick(e) {
     const target = e.target;
-    this.rememberActionPost(target);
-
-    if (this.isSaveMenuItem(target)) {
-      const postElement = this.getRecentActionPost() || this.findPostElement(target);
-      if (postElement) {
-        setTimeout(() => this.captureInteraction('save', postElement), 150);
-      }
-      return;
-    }
 
     if (this.isLikeButton(target)) {
       const postElement = this.findPostElement(target);
@@ -63,62 +52,19 @@ class YouTubeTracker extends BasePlatformTracker {
     return YouTubeSelectors.POST_CONTAINER;
   }
 
-  findNearestPostElement(element) {
-    const selectors = this.getPostContainerSelectors();
-    if (!selectors || selectors.length === 0) return null;
-    for (const selector of selectors) {
-      const post = element.closest ? element.closest(selector) : null;
-      if (post) return post;
-    }
-    return null;
-  }
-
   findPostElement(element) {
-    const direct = this.findNearestPostElement(element);
-    if (direct) return direct;
-
-    if (this.isOverlayMenuElement(element)) {
-      const recent = this.getRecentActionPost();
-      if (recent) return recent;
+    const selectors = this.getPostContainerSelectors();
+    if (selectors && selectors.length > 0) {
+      for (const selector of selectors) {
+        const post = element.closest ? element.closest(selector) : null;
+        if (post) return post;
+      }
     }
 
     const watchRoot = document.querySelector('ytd-watch-flexy') || document.querySelector('#primary') || document.querySelector('ytd-watch-metadata');
     if (watchRoot) return watchRoot;
 
     return document.body;
-  }
-
-  rememberActionPost(element) {
-    const post = this.findNearestPostElement(element);
-    if (post) {
-      this.lastActionPost = post;
-      this.lastActionTimestamp = Date.now();
-    }
-  }
-
-  getRecentActionPost(maxAgeMs = 8000) {
-    if (!this.lastActionPost) return null;
-    if (!document.contains(this.lastActionPost)) return null;
-    if (Date.now() - this.lastActionTimestamp > maxAgeMs) return null;
-    return this.lastActionPost;
-  }
-
-  isOverlayMenuElement(element) {
-    if (!element || !element.closest) return false;
-    return !!element.closest('ytd-popup-container, tp-yt-paper-dialog, ytd-menu-popup-renderer');
-  }
-
-  isSaveMenuItem(element) {
-    for (let el = element; el && el !== document.body; el = el.parentElement) {
-      if (el.matches && el.matches(YouTubeSelectors.WATCH_LATER_MENU_ITEM.join(','))) {
-        return true;
-      }
-      const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-      const text = (el.textContent || '').trim().toLowerCase();
-      if (aria.includes('watch later') || aria.includes('save to watch later')) return true;
-      if (text === 'watch later' || text === 'save to watch later') return true;
-    }
-    return false;
   }
 
   isLikeButton(element) {

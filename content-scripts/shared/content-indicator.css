@@ -36,6 +36,92 @@
   animation: ct-saved-indicator-pulse 1.2s ease-in-out infinite;
 }
 
+.ct-manual-save-btn {
+  position: absolute;
+  top: 36px;
+  right: 10px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: linear-gradient(120deg, #c56b2a, #a9541f);
+  color: #fff;
+  border: none;
+  box-shadow: 0 10px 22px rgba(44, 32, 21, 0.22);
+  cursor: pointer;
+  z-index: 4;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.ct-manual-save-btn:hover {
+  transform: translateY(-1px);
+  background: linear-gradient(120deg, #a9541f, #91461b);
+}
+
+.ct-manual-save-btn--saving {
+  background: #f1e8df;
+  color: #7b6c5c;
+  border: 1px solid rgba(59, 45, 34, 0.18);
+  cursor: default;
+}
+
+.ct-manual-save-btn--saved {
+  background: #f7efe6;
+  color: #a9541f;
+  border: 1px solid rgba(197, 107, 42, 0.35);
+  cursor: default;
+}
+
+.ct-manual-save-btn:disabled {
+  opacity: 0.8;
+}
+
+.ct-manual-favorite-btn {
+  position: absolute;
+  top: 36px;
+  right: 86px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid rgba(197, 107, 42, 0.35);
+  background: #f7efe6;
+  color: #a9541f;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: "Space Grotesk", "IBM Plex Sans", "Segoe UI", sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 18px rgba(44, 32, 21, 0.2);
+  cursor: pointer;
+  z-index: 4;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease, opacity 0.15s ease;
+}
+
+.ct-manual-favorite-btn:hover {
+  transform: translateY(-1px);
+  background: #f1e3d6;
+}
+
+.ct-manual-favorite-btn--saving {
+  background: #f1e8df;
+  color: #7b6c5c;
+  border-color: rgba(59, 45, 34, 0.18);
+  cursor: default;
+}
+
+.ct-manual-favorite-btn--favorited {
+  background: linear-gradient(120deg, #c56b2a, #a9541f);
+  color: #fff;
+  border-color: rgba(197, 107, 42, 0.4);
+}
+
+.ct-manual-favorite-btn:disabled {
+  opacity: 0.8;
+}
+
 @keyframes ct-saved-indicator-float {
   0% {
     transform: translateY(0);

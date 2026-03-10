@@ -1,0 +1,16 @@
+{
+  "name": "content-tracker-repo-tools",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Repository checks for monorepo migration readiness",
+  "scripts": {
+    "check:mv3-content-script": "node scripts/check-content-script-esm.js",
+    "check:flag-sync": "node scripts/check-flag-sync.js",
+    "check:storage-sync": "node scripts/check-storage-sync.js",
+    "check:adapter-contract": "node scripts/check-adapter-contract.js",
+    "check:ui-sync": "node scripts/check-ui-sync.js",
+    "check:background-sync": "node scripts/check-background-sync.js",
+    "check:parity": "cat docs/parity-matrix.md",
+    "check:repo": "npm run check:mv3-content-script && npm run check:flag-sync && npm run check:storage-sync && npm run check:adapter-contract && npm run check:ui-sync && npm run check:background-sync"
+  }
+}
