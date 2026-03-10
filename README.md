@@ -13,6 +13,33 @@ A powerful Chrome extension that automatically tracks and categorizes your socia
 - **Local Storage**: All data stored securely in your browser
 - **Export Functionality**: Export your saved content as JSON for backup
 
+## Repository Operations (Monorepo Transition)
+
+- "packages가 원본, ext-chrome inline은 호환 출력"
+- "content script import 금지"
+- "빌드 도구 도입 전까지 수동 동기화 절차"
+
+### Rules
+
+- Keep shared logic/types/UI in `packages/*` as the source of truth.
+- Keep platform-specific behavior in `apps/*` adapter layers.
+- Keep active Chrome MV3 content scripts inline-compatible (no direct `import/export` in active entries).
+- Before bundler adoption, manually sync compatible outputs for runtime entry files.
+- Do not change storage schema/content data unless explicitly required.
+
+## Migration Roadmap
+
+- Parity status: `docs/parity-matrix.md`
+- Incremental migration steps: `docs/migration-plan.md`
+- MV3 content-script ESM check: `npm run check:mv3-content-script`
+- Feature flag sync check: `npm run check:flag-sync`
+- Storage sync check: `npm run check:storage-sync`
+- Adapter contract check: `npm run check:adapter-contract`
+- UI mirror sync check: `npm run check:ui-sync`
+- Background mirror sync check: `npm run check:background-sync`
+- Manual sync reference: `docs/sync-manual.md`
+- Platform adapter notes: `docs/platform-adapters.md`
+
 ## Installation
 
 ### Load the Extension in Chrome
@@ -26,7 +53,7 @@ A powerful Chrome extension that automatically tracks and categorizes your socia
 
 3. **Load the Extension**
    - Click "Load unpacked"
-   - Select the `/Users/zone/Chrome_extension` directory
+   - Select the `/Users/zone/My Projects/Content Tracker` directory
    - The extension should now appear in your extensions list
 
 4. **Pin the Extension** (Optional)
@@ -164,26 +191,24 @@ All data is stored locally using Chrome's storage API:
 
 ## File Structure
 
-```
-Chrome_extension/
+```text
+Content Tracker/
 ├── manifest.json                 # Extension configuration
-├── background/
-│   └── service-worker.js        # Background coordinator
-├── content-scripts/
-│   ├── shared/                  # Shared utilities
-│   │   ├── base-tracker.js
-│   │   ├── time-tracker.js
-│   │   └── content-extractor.js
-│   ├── instagram/               # Instagram-specific
-│   ├── twitter/                 # Twitter-specific
-│   ├── linkedin/                # LinkedIn-specific
-│   └── tiktok/                  # TikTok-specific
-├── popup/                       # Quick view interface
-├── dashboard/                   # Full dashboard
-├── lib/                         # Core libraries
-│   ├── storage-manager.js
-│   └── ai-categorizer.js
-└── assets/                      # Icons and resources
+├── background/                   # Active Chrome runtime (legacy path)
+├── content-scripts/              # Active Chrome runtime (legacy path)
+├── popup/                        # Active Chrome runtime (legacy path)
+├── dashboard/                    # Active Chrome runtime (legacy path)
+├── lib/                          # Active shared libs (legacy path)
+├── apps/                         # Platform layers for migration
+│   ├── ext-chrome/
+│   ├── ext-safari/
+│   ├── web/
+│   └── ios-app/
+├── packages/                     # Source-of-truth shared modules
+│   ├── core/
+│   ├── api-types/
+│   └── ui/
+└── assets/
 ```
 
 ## Troubleshooting
@@ -269,6 +294,17 @@ Potential features for future versions:
 - OpenAI or Google Gemini API key
 
 ### Testing
+
+### Repository Checks
+
+```bash
+npm run check:repo
+npm run check:storage-sync
+npm run check:adapter-contract
+npm run check:ui-sync
+npm run check:background-sync
+npm run check:parity
+```
 
 1. Make changes to source files
 2. Go to `chrome://extensions/`

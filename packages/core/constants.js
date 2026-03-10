@@ -1,8 +1,7 @@
 /**
- * Runtime copy for active Chrome extension path.
+ * Canonical shared constants source.
  *
- * Canonical source: packages/core/constants.js
- * Keep synchronized manually until bundler adoption.
+ * Runtime copy currently exists at lib/constants.js until bundler adoption.
  */
 
 export const PREDEFINED_CATEGORIES = [

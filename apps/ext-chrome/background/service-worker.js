@@ -1,0 +1,1443 @@
+// Background Service Worker - Coordinates extension functionality
+// Import storage manager and AI categorizer
+import { StorageManager } from '../lib/storage-manager.js';
+import { AICategorizer } from '../lib/ai-categorizer.js';
+
+// Initialize managers
+const storageManager = new StorageManager();
+const aiCategorizer = new AICategorizer();
+
+// Initialize on startup
+chrome.runtime.onStartup.addListener(async () => {
+  console.log('Extension started');
+  await storageManager.initialize();
+  await aiCategorizer.init();
+});
+
+// Initialize on install
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log('Extension installed/updated:', details.reason);
+
+  if (details.reason === 'install') {
+    // First time installation
+    await storageManager.initialize();
+    await aiCategorizer.init();
+
+    // Show welcome notification
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('assets/icons/icon128.png'),
+      title: 'Social Media Content Tracker Installed!',
+      message: 'Start browsing Instagram, Threads, YouTube, Twitter, LinkedIn, or TikTok. Your interactions will be automatically tracked.',
+      priority: 2
+    });
+
+    // Open dashboard welcome page
+    chrome.tabs.create({
+      url: chrome.runtime.getURL('dashboard/dashboard.html')
+    });
+  } else if (details.reason === 'update') {
+    // Extension updated
+    await storageManager.initialize(); // Ensure any new fields are added
+    await aiCategorizer.init();
+  }
+});
+
+// Listen for messages from content scripts and popup/dashboard
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('Message received:', message.type);
+
+  // Handle async responses
+  handleMessage(message, sender)
+    .then(response => {
+      sendResponse(response);
+    })
+    .catch(error => {
+      console.error('Error handling message:', error);
+      sendResponse({ success: false, error: error.message });
+    });
+
+  // Return true to indicate we'll send a response asynchronously
+  return true;
+});
+
+/**
+ * Handle incoming messages
+ */
+async function handleMessage(message, sender) {
+  switch (message.type) {
+    case 'SAVE_INTERACTION':
+      return await handleSaveInteraction(message.data, sender);
+
+    case 'GET_INTERACTIONS':
+      return await handleGetInteractions(message.filters);
+
+    case 'GET_INTERACTION_BY_ID':
+      return await handleGetInteractionById(message.id);
+    case 'GET_INTERACTION_BY_KEY':
+      return await handleGetInteractionByKey(message.contentKey);
+
+    case 'UPDATE_INTERACTION':
+      return await handleUpdateInteraction(message.id, message.updates);
+
+    case 'DELETE_INTERACTION':
+      return await handleDeleteInteraction(message.id);
+
+    case 'GET_SETTINGS':
+      return await handleGetSettings();
+
+    case 'UPDATE_SETTINGS':
+      return await handleUpdateSettings(message.updates);
+
+    case 'GET_METADATA':
+      return await handleGetMetadata();
+
+    case 'GET_STATISTICS':
+      return await handleGetStatistics();
+
+    case 'GET_CATEGORIES':
+      return await handleGetCategories();
+
+
+    case 'EXPORT_DATA':
+      return await handleExportData();
+
+    case 'IMPORT_DATA':
+      return await handleImportData(message.data);
+
+
+    case 'PROCESS_AI_QUEUE':
+      return await handleProcessAIQueue();
+
+    case 'CANCEL_AI_CATEGORIZATION':
+      shouldCancelAI = true;
+      return { success: true };
+
+    case 'GET_USER_CATEGORIES':
+      return await handleGetUserCategories();
+
+    case 'UPDATE_USER_CATEGORIES':
+      return await handleUpdateUserCategories(message.categories);
+
+    case 'SUGGEST_CATEGORY_REORG':
+      return await handleSuggestCategoryReorg(message.payload);
+
+    case 'FETCH_IMAGE_DATA_URL':
+      return await handleFetchImageDataUrl(message.url);
+
+    case 'FETCH_INSTAGRAM_CAPTION':
+      return await handleFetchInstagramCaption(message.url);
+
+    case 'FETCH_POST_THUMBNAIL':
+      return await handleFetchPostThumbnail(message.url);
+
+    case 'FETCH_YOUTUBE_CAPTIONS':
+      return await handleFetchYouTubeCaptionsMessage(message.url);
+
+    case 'INJECT_TIKTOK_HOOK':
+      return await handleInjectTikTokHook(sender);
+
+    case 'CAPTURE_POST_PREVIEW':
+      return await handleCapturePostPreview(message, sender);
+
+    // Account Management
+    case 'GET_USER_ACCOUNTS':
+      return await handleGetUserAccounts();
+
+    case 'SAVE_USER_ACCOUNTS':
+      return await handleSaveUserAccounts(message.accounts);
+
+    case 'ADD_USER_ACCOUNT':
+      return await handleAddUserAccount(message.platform, message.accountInfo);
+
+    case 'UPDATE_USER_ACCOUNT':
+      return await handleUpdateUserAccount(message.platform, message.accountId, message.updates);
+
+    case 'REMOVE_USER_ACCOUNT':
+      return await handleRemoveUserAccount(message.platform, message.accountId);
+
+    case 'PING':
+      return { success: true, message: 'pong' };
+
+    case 'GET_CURRENT_TAB_ID':
+      return { success: true, tabId: sender?.tab?.id || null };
+
+    default:
+      console.warn('Unknown message type:', message.type);
+      return { success: false, error: 'Unknown message type' };
+  }
+}
+
+async function handleSuggestCategoryReorg(payload = {}) {
+  try {
+    await aiCategorizer.init();
+    const categoriesWithUsage = await storageManager.getCategoriesWithUsage();
+    const result = await aiCategorizer.suggestCategoryReorg({
+      action: payload.action,
+      categories: payload.categories,
+      categoriesWithUsage,
+      goal: payload.goal
+    });
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('Error suggesting category reorg:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleFetchImageDataUrl(url) {
+  try {
+    if (!url) {
+      return { success: false, error: 'Missing URL' };
+    }
+    const dataUrl = await fetchImageAsDataUrl(url);
+    return { success: true, dataUrl };
+  } catch (error) {
+    console.warn('Failed to fetch image data URL:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleFetchInstagramCaption(url) {
+  try {
+    if (!url) {
+      return { success: false, error: 'Missing URL' };
+    }
+    const response = await fetch(url, {
+      credentials: 'omit',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const html = await response.text();
+    const caption = extractCaptionFromHtml(html);
+    return { success: true, caption: caption || '' };
+  } catch (error) {
+    console.warn('Failed to fetch Instagram caption:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleFetchPostThumbnail(url) {
+  try {
+    if (!url) {
+      return { success: false, error: 'Missing URL' };
+    }
+    const response = await fetch(url, {
+      credentials: 'omit',
+      cache: 'no-store'
+    });
+    if (!response.ok) {
+      return { success: false, error: `HTTP ${response.status}` };
+    }
+    const html = await response.text();
+    const thumbnailUrl = extractThumbnailFromHtml(html);
+    return { success: true, thumbnailUrl: thumbnailUrl || '' };
+  } catch (error) {
+    console.warn('Failed to fetch post thumbnail:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleFetchYouTubeCaptionsMessage(url) {
+  try {
+    if (!url) return { success: false, error: 'Missing URL' };
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) return { success: false, error: 'Missing video id' };
+    const captions = await fetchYouTubeCaptions(videoId);
+    return { success: true, captions: captions || '' };
+  } catch (error) {
+    console.warn('Failed to fetch YouTube captions:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleInjectTikTokHook(sender) {
+  try {
+    const tabId = sender?.tab?.id;
+    if (!tabId) {
+      return { success: false, error: 'Missing tab id' };
+    }
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        if (window.__ctTikTokHookInstalled) return;
+        window.__ctTikTokHookInstalled = true;
+
+        const shouldInspectUrl = (url) => {
+          if (!url || typeof url !== 'string') return false;
+          return url.includes('api/recommend') ||
+            url.includes('item_list') ||
+            url.includes('feed') ||
+            url.includes('aweme') ||
+            url.includes('mcs-sg.tiktokv.com') ||
+            url.includes('/v1/list') ||
+            url.includes('webcast.tiktok.com/webcast/feed');
+        };
+
+        const extractItems = (data) => {
+          if (!data || typeof data !== 'object') return [];
+          const list = data.itemList || data.item_list || data.aweme_list || data.itemListData || data.data?.item_list || data.data?.itemList;
+          if (!Array.isArray(list)) return [];
+          return list.map(item => {
+            const id = item?.id || item?.aweme_id || item?.itemId;
+            const desc = item?.desc || item?.description || item?.title;
+            const author = item?.author?.uniqueId || item?.author?.unique_id || item?.author?.nickname || item?.author?.authorName || item?.authorName;
+            const shareUrl = item?.shareInfo?.share_url || item?.shareInfo?.shareUrl || item?.shareMeta?.share_url || item?.shareMeta?.shareUrl || item?.share_url || item?.shareUrl;
+            if (!id || !author) return null;
+            return {
+              id: String(id),
+              author: String(author),
+              desc: desc ? String(desc) : '',
+              shareUrl: shareUrl ? String(shareUrl) : ''
+            };
+          }).filter(Boolean);
+        };
+
+        const postItems = (items) => {
+          if (!Array.isArray(items) || items.length === 0) return;
+          window.postMessage({ type: 'CT_TIKTOK_FEED', items }, '*');
+          try {
+            console.log('ct:tiktok hook posted items', items.slice(0, 2));
+          } catch (error) {
+            // ignore
+          }
+        };
+
+        const originalFetch = window.fetch;
+        if (typeof originalFetch === 'function') {
+          window.fetch = async function (...args) {
+            const response = await originalFetch.apply(this, args);
+            try {
+              const url = typeof args[0] === 'string' ? args[0] : args[0]?.url;
+              if (shouldInspectUrl(url)) {
+                const clone = response.clone();
+                const contentType = clone.headers.get('content-type') || '';
+                if (contentType.includes('application/json')) {
+                  clone.json().then((data) => postItems(extractItems(data))).catch(() => { });
+                } else {
+                  clone.text().then((text) => {
+                    try {
+                      postItems(extractItems(JSON.parse(text)));
+                    } catch (error) {
+                      // ignore
+                    }
+                  }).catch(() => { });
+                }
+              }
+            } catch (error) {
+              // ignore
+            }
+            return response;
+          };
+        }
+
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+          this.__ctTikTokUrl = url;
+          return originalOpen.call(this, method, url, ...rest);
+        };
+        const originalSend = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.send = function (...args) {
+          this.addEventListener('load', function () {
+            try {
+              const url = this.__ctTikTokUrl;
+              if (!shouldInspectUrl(url)) return;
+              const text = this.responseText;
+              if (!text) return;
+              postItems(extractItems(JSON.parse(text)));
+            } catch (error) {
+              // ignore
+            }
+          });
+          return originalSend.apply(this, args);
+        };
+      }
+    });
+    return { success: true };
+  } catch (error) {
+    console.warn('Failed to inject TikTok hook:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function handleCapturePostPreview(message, sender) {
+  try {
+    const hasActiveTab = await chrome.permissions.contains({
+      permissions: ['activeTab']
+    });
+    const hasTabsPermission = await chrome.permissions.contains({
+      permissions: ['tabs']
+    });
+    const hasAllUrls = await chrome.permissions.contains({
+      origins: ['<all_urls>']
+    });
+    if (!hasActiveTab && !hasTabsPermission && !hasAllUrls) {
+      return { success: false, error: 'Capture permission not granted' };
+    }
+
+    const tab = sender?.tab;
+    if (!tab?.windowId) {
+      return { success: false, error: 'Missing tab context' };
+    }
+    const { interactionId, rect, dpr } = message || {};
+    if (!interactionId || !rect) {
+      return { success: false, error: 'Missing capture data' };
+    }
+
+    const dataUrl = await capturePreviewFromTab(tab.windowId, rect, dpr || 1);
+    if (!dataUrl) {
+      return { success: false, error: 'Capture failed' };
+    }
+
+    const existing = await storageManager.getInteractionById(interactionId);
+    if (!existing) {
+      return { success: false, error: 'Interaction not found' };
+    }
+
+    const updatedContent = {
+      ...existing.content,
+      previewDataUrl: dataUrl,
+      previewCachedAt: Date.now()
+    };
+
+    await storageManager.updateInteraction(interactionId, { content: updatedContent });
+    return { success: true };
+  } catch (error) {
+    if (!String(error?.message || '').includes('activeTab')) {
+      console.warn('Failed to capture preview:', error);
+    }
+    return { success: false, error: error.message };
+  }
+}
+
+async function capturePreviewFromTab(windowId, rect, dpr) {
+  const screenshotUrl = await chrome.tabs.captureVisibleTab(windowId, {
+    format: 'jpeg',
+    quality: 70
+  });
+  if (!screenshotUrl) return null;
+  if (typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap !== 'function') {
+    return screenshotUrl;
+  }
+
+  try {
+    const screenshotBlob = await (await fetch(screenshotUrl)).blob();
+    const bitmap = await createImageBitmap(screenshotBlob);
+
+    const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+    const safeRect = rect || { x: 0, y: 0, width: bitmap.width / dpr, height: bitmap.height / dpr };
+    const sx = clamp(Math.floor(safeRect.x * dpr), 0, bitmap.width - 1);
+    const sy = clamp(Math.floor(safeRect.y * dpr), 0, bitmap.height - 1);
+    const sw = clamp(Math.floor(safeRect.width * dpr), 1, bitmap.width - sx);
+    const sh = clamp(Math.floor(safeRect.height * dpr), 1, bitmap.height - sy);
+
+    if (sw < 2 || sh < 2) return screenshotUrl;
+
+    const maxWidth = 640;
+    const scale = Math.min(1, maxWidth / sw);
+    const targetW = Math.max(1, Math.round(sw * scale));
+    const targetH = Math.max(1, Math.round(sh * scale));
+
+    const canvas = new OffscreenCanvas(targetW, targetH);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, sx, sy, sw, sh, 0, 0, targetW, targetH);
+
+    const outBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: 0.7 });
+    const buffer = await outBlob.arrayBuffer();
+    const base64 = arrayBufferToBase64(buffer);
+    return `data:${outBlob.type || 'image/jpeg'};base64,${base64}`;
+  } catch (error) {
+    console.warn('Preview crop failed, using full screenshot:', error);
+    return screenshotUrl;
+  }
+}
+
+/**
+ * Save a new interaction
+ */
+async function handleSaveInteraction(interaction, sender) {
+  try {
+    // Add tab ID to the interaction so we can notify the tab later
+    if (sender?.tab?.id) {
+      interaction.tabId = sender.tab.id;
+    }
+
+    const settings = await storageManager.getSettings();
+    const isImport = !!(interaction.importedFrom || (interaction.interactionType || '').startsWith('imported_'));
+    const skipAI = isImport && settings?.skipAIForImports;
+    const suppressNotifications = isImport && settings?.suppressImportNotifications;
+
+    const result = await storageManager.saveInteraction(interaction, { skipAI });
+
+    if (result.success && !result.skippedDuplicate) {
+      // Show notification
+      if (!suppressNotifications) {
+        chrome.notifications.create({
+          type: 'basic',
+          iconUrl: chrome.runtime.getURL('assets/icons/icon128.png'),
+          title: 'Content Saved',
+          message: `Saved from ${interaction.platform}`,
+          priority: 0
+        });
+
+        console.log('Notification created for saved interaction');
+      }
+    }
+
+    if (result.success && interaction?.platform === 'youtube') {
+      const targetId = result.skippedDuplicate ? result.existingId : interaction.id;
+      await maybeEnrichYouTubeInteraction(targetId, interaction);
+    }
+
+    if (result.success && !result.skippedDuplicate) {
+      // Trigger AI processing
+      processAIQueue();
+    }
+
+    return { success: result.success, skippedDuplicate: result.skippedDuplicate };
+  } catch (error) {
+    console.error('Error in handleSaveInteraction:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function maybeEnrichYouTubeInteraction(targetId, interaction) {
+  try {
+    if (!targetId) return;
+    const stored = await storageManager.getInteractionById(targetId);
+    if (!stored) return;
+
+    const content = stored.content || interaction.content || {};
+    const url = content.url || interaction.content?.url || '';
+    const videoId = extractYouTubeVideoId(url);
+    if (!videoId) return;
+
+    const updatedContent = { ...content };
+
+    const hasImages = Array.isArray(content.imageUrls) && content.imageUrls.length > 0;
+    if (!hasImages) {
+      updatedContent.imageUrls = [`https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`];
+    }
+
+    const captions = await fetchYouTubeCaptions(videoId);
+    if (captions) {
+      updatedContent.captions = captions;
+      if (!updatedContent.text || !updatedContent.text.trim()) {
+        updatedContent.text = captions;
+      }
+    }
+
+    await storageManager.updateInteraction(targetId, { content: updatedContent });
+  } catch (error) {
+    console.warn('YouTube enrichment failed:', error);
+  }
+}
+
+function extractYouTubeVideoId(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname.includes('youtu.be')) {
+      return parsed.pathname.replace('/', '').trim();
+    }
+    if (parsed.pathname.startsWith('/shorts/')) {
+      const parts = parsed.pathname.split('/');
+      return parts[2] || '';
+    }
+    return parsed.searchParams.get('v') || '';
+  } catch (error) {
+    return '';
+  }
+}
+
+async function fetchYouTubeCaptions(videoId) {
+  try {
+    const listUrl = `https://www.youtube.com/api/timedtext?type=list&v=${encodeURIComponent(videoId)}`;
+    const listResp = await fetch(listUrl, { cache: 'no-store' });
+    if (!listResp.ok) return '';
+    const listText = await listResp.text();
+    const tracks = parseCaptionTracks(listText);
+    const track = tracks.find(track => track.langCode?.startsWith('en')) || tracks[0];
+    const langCode = track?.langCode || 'en';
+    const kind = track?.kind || '';
+
+    const captionUrl = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${encodeURIComponent(langCode)}${kind ? `&kind=${encodeURIComponent(kind)}` : ''}`;
+    const captionResp = await fetch(captionUrl, { cache: 'no-store' });
+    if (captionResp.ok) {
+      const captionBody = await captionResp.text();
+      const text = parseCaptionText(captionBody);
+      if (text) return text.trim();
+    }
+
+    if (!tracks.length) {
+      const fallbackResp = await fetch(`https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=en&kind=asr`, { cache: 'no-store' });
+      if (!fallbackResp.ok) return '';
+      const fallbackBody = await fallbackResp.text();
+      const fallbackText = parseCaptionText(fallbackBody);
+      return fallbackText.trim();
+    }
+
+    return '';
+  } catch (error) {
+    console.warn('Failed to fetch YouTube captions:', error);
+    return '';
+  }
+}
+
+function parseCaptionTracks(xmlText) {
+  if (!xmlText) return [];
+  const tracks = [];
+  const trackMatches = xmlText.match(/<track\b[^>]*>/g) || [];
+  trackMatches.forEach((track) => {
+    const langCode = getXmlAttr(track, 'lang_code');
+    const kind = getXmlAttr(track, 'kind');
+    if (langCode) {
+      tracks.push({ langCode, kind });
+    }
+  });
+  return tracks;
+}
+
+function parseCaptionText(payload) {
+  if (!payload) return '';
+  if (payload.includes('<text')) {
+    const lines = [];
+    const textMatches = payload.match(/<text\b[^>]*>[\s\S]*?<\/text>/g) || [];
+    textMatches.forEach((block) => {
+      const inner = block.replace(/<text\b[^>]*>/, '').replace(/<\/text>/, '');
+      const decoded = decodeHtmlEntities(inner.replace(/\n/g, ' ').trim()).replace(/<[^>]+>/g, '');
+      if (decoded) lines.push(decoded);
+    });
+    return lines.join(' ');
+  }
+
+  // VTT fallback
+  const lines = payload.split('\\n').map(line => line.trim());
+  const cleaned = lines.filter(line => line && !line.includes('-->') && line !== 'WEBVTT' && !line.startsWith('NOTE'));
+  return cleaned.join(' ');
+}
+
+function getXmlAttr(tag, name) {
+  const match = tag.match(new RegExp(`${name}=\"([^\"]+)\"`));
+  return match ? match[1] : '';
+}
+
+async function cacheInteractionPreview(interaction) {
+  if (!interaction || !interaction.id) return;
+  if (interaction.content?.previewDataUrl) return;
+  const imageUrl = interaction.content?.imageUrls?.[0];
+  if (!imageUrl) return;
+
+  const dataUrl = await fetchImageAsDataUrl(imageUrl);
+  if (!dataUrl) return;
+
+  const updatedContent = {
+    ...interaction.content,
+    previewDataUrl: dataUrl,
+    previewCachedAt: Date.now()
+  };
+
+  await storageManager.updateInteraction(interaction.id, { content: updatedContent });
+}
+
+async function fetchImageAsDataUrl(url) {
+  // Use 'omit' for credentials - CDN images (e.g. pbs.twimg.com) don't support
+  // credentialed CORS requests and will block with 'include' mode
+  let response = await fetch(url, {
+    credentials: 'omit',
+    cache: 'no-store'
+  });
+
+  if (!response.ok) {
+    response = await fetch(withCacheBuster(url), {
+      credentials: 'omit',
+      cache: 'no-store'
+    });
+  }
+
+  if (!response.ok) {
+    throw new Error(`Image fetch failed: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const buffer = await blob.arrayBuffer();
+  const base64 = arrayBufferToBase64(buffer);
+  const mime = blob.type || 'image/jpeg';
+  return `data:${mime};base64,${base64}`;
+}
+
+function withCacheBuster(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('ct_bust', Date.now().toString());
+    return parsed.toString();
+  } catch (error) {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}ct_bust=${Date.now()}`;
+  }
+}
+
+function extractCaptionFromHtml(html) {
+  if (!html) return '';
+  const metaMatch = html.match(/property="og:description" content="([^"]*)"/i)
+    || html.match(/name="description" content="([^"]*)"/i);
+  if (!metaMatch) return '';
+
+  const decoded = decodeHtmlEntities(metaMatch[1]).trim();
+  if (!decoded) return '';
+
+  const quoted = decoded.match(/[“"]([^”"]+)[”"]/);
+  if (quoted && quoted[1]) {
+    const text = quoted[1].trim();
+    if (text) return text;
+  }
+
+  const onInstagramMatch = decoded.match(/^(.+?)\s+on\s+instagram\s*[:：]\s*(.+)$/i);
+  if (!onInstagramMatch) return '';
+
+  const authorSegment = (onInstagramMatch[1] || '').trim();
+  const candidate = (onInstagramMatch[2] || '').trim();
+  if (!candidate) return '';
+
+  let authorHandle = authorSegment;
+  const handleMatch = authorSegment.match(/@([\w.]+)/);
+  if (handleMatch && handleMatch[1]) {
+    authorHandle = handleMatch[1];
+  }
+  authorHandle = authorHandle.replace(/^@/, '').trim();
+  const candidateNormalized = candidate.replace(/^@/, '').trim();
+
+  if (authorHandle && candidateNormalized.toLowerCase() === authorHandle.toLowerCase()) {
+    return '';
+  }
+
+  return candidate;
+}
+
+function extractThumbnailFromHtml(html) {
+  if (!html) return '';
+
+  const jsonLdMatches = html.match(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi) || [];
+  for (const match of jsonLdMatches) {
+    const jsonMatch = match.match(/<script[^>]*>([\s\S]*?)<\/script>/i);
+    if (!jsonMatch || !jsonMatch[1]) continue;
+    try {
+      const parsed = JSON.parse(jsonMatch[1].trim());
+      const candidate = findThumbnailInJsonLd(parsed);
+      if (candidate) return candidate;
+    } catch (error) {
+      continue;
+    }
+  }
+
+  const ogImageMatch = html.match(/property=["']og:image["'][^>]*content=["']([^"']+)["']/i)
+    || html.match(/content=["']([^"']+)["'][^>]*property=["']og:image["']/i);
+  if (ogImageMatch && ogImageMatch[1]) {
+    const decoded = decodeHtmlEntities(ogImageMatch[1]).trim();
+    if (decoded && !isLikelyPlaceholderThumbnail(decoded) && !isLikelyProfileImage(decoded)) {
+      return decoded;
+    }
+  }
+
+  const twitterImageMatch = html.match(/name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i)
+    || html.match(/content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i);
+  if (twitterImageMatch && twitterImageMatch[1]) {
+    const decoded = decodeHtmlEntities(twitterImageMatch[1]).trim();
+    if (decoded && !isLikelyPlaceholderThumbnail(decoded) && !isLikelyProfileImage(decoded)) {
+      return decoded;
+    }
+  }
+
+  return '';
+}
+
+function findThumbnailInJsonLd(payload) {
+  if (!payload) return '';
+  if (Array.isArray(payload)) {
+    for (const entry of payload) {
+      const candidate = findThumbnailInJsonLd(entry);
+      if (candidate) return candidate;
+    }
+    return '';
+  }
+
+  if (typeof payload === 'object') {
+    const direct = normalizeThumbnailValue(payload.thumbnailUrl || payload.thumbnailURL || payload.thumbnail || payload.image);
+    if (direct) return direct;
+
+    if (payload.video && typeof payload.video === 'object') {
+      const fromVideo = normalizeThumbnailValue(payload.video.thumbnailUrl || payload.video.thumbnailURL || payload.video.image);
+      if (fromVideo) return fromVideo;
+    }
+
+    for (const value of Object.values(payload)) {
+      const candidate = findThumbnailInJsonLd(value);
+      if (candidate) return candidate;
+    }
+  }
+
+  return '';
+}
+
+function normalizeThumbnailValue(value) {
+  if (!value) return '';
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const candidate = normalizeThumbnailValue(entry);
+      if (candidate) return candidate;
+    }
+    return '';
+  }
+  if (typeof value === 'string') {
+    const decoded = decodeHtmlEntities(value).trim();
+    if (!decoded || isLikelyPlaceholderThumbnail(decoded) || isLikelyProfileImage(decoded)) return '';
+    return decoded;
+  }
+  if (typeof value === 'object') {
+    const url = value.url || value.contentUrl;
+    if (url) {
+      const decoded = decodeHtmlEntities(url).trim();
+      if (!decoded || isLikelyPlaceholderThumbnail(decoded) || isLikelyProfileImage(decoded)) return '';
+      return decoded;
+    }
+  }
+  return '';
+}
+
+function isLikelyPlaceholderThumbnail(url) {
+  if (!url) return true;
+  const lower = url.toLowerCase();
+  return lower.includes('placeholder') ||
+    lower.includes('logo') ||
+    lower.includes('sprite') ||
+    lower.includes('blank') ||
+    lower.includes('default');
+}
+
+function isLikelyProfileImage(url) {
+  if (!url) return true;
+  const lower = url.toLowerCase();
+  return lower.includes('profile') ||
+    lower.includes('avatar') ||
+    lower.includes('aweme-avatar') ||
+    lower.includes('tiktokcdn.com/aweme') ||
+    lower.includes('s150x150') ||
+    lower.includes('s320x320');
+}
+function decodeHtmlEntities(text) {
+  if (!text) return '';
+  let decoded = text
+    .replace(/&quot;/g, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'");
+
+  decoded = decoded.replace(/&#(\d+);/g, (_match, num) => {
+    const code = Number(num);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+  });
+
+  decoded = decoded.replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => {
+    const code = parseInt(hex, 16);
+    return Number.isFinite(code) ? String.fromCodePoint(code) : _match;
+  });
+
+  return decoded;
+}
+
+function arrayBufferToBase64(buffer) {
+  let binary = '';
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Get interactions with filters
+ */
+async function handleGetInteractions(filters) {
+  try {
+    const interactions = await storageManager.getInteractions(filters);
+    return { success: true, data: interactions };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get single interaction by ID
+ */
+async function handleGetInteractionById(id) {
+  try {
+    const interaction = await storageManager.getInteractionById(id);
+    return { success: true, data: interaction };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get interaction by content key
+ */
+async function handleGetInteractionByKey(contentKey) {
+  try {
+    const interaction = await storageManager.getInteractionByKey(contentKey);
+    return { success: true, data: interaction };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Update interaction
+ */
+async function handleUpdateInteraction(id, updates) {
+  try {
+    const success = await storageManager.updateInteraction(id, updates);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Delete interaction
+ */
+async function handleDeleteInteraction(id) {
+  try {
+    const success = await storageManager.deleteInteraction(id);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get settings
+ */
+async function handleGetSettings() {
+  try {
+    const settings = await storageManager.getSettings();
+    return { success: true, data: settings };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Update settings
+ */
+async function handleUpdateSettings(updates) {
+  try {
+    const success = await storageManager.updateSettings(updates);
+
+    // Reinitialize AI categorizer with new settings
+    if (updates.openaiApiKey || updates.geminiApiKey || updates.aiProvider || updates.apiKey) {
+      await aiCategorizer.init();
+    }
+
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get metadata
+ */
+async function handleGetMetadata() {
+  try {
+    const metadata = await storageManager.getMetadata();
+    return { success: true, data: metadata };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get statistics
+ */
+async function handleGetStatistics() {
+  try {
+    const stats = await storageManager.getStatistics();
+    return { success: true, data: stats };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get all categories
+ */
+async function handleGetCategories() {
+  try {
+    const categories = await storageManager.getAllCategories();
+    return { success: true, data: categories };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Get user-defined categories
+ */
+async function handleGetUserCategories() {
+  try {
+    const categories = await storageManager.getUserCategories();
+    return { success: true, data: categories };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Update user-defined categories
+ */
+async function handleUpdateUserCategories(categories) {
+  try {
+    const success = await storageManager.saveUserCategories(categories);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Export data
+ */
+async function handleExportData() {
+  try {
+    const blob = await storageManager.exportData();
+    // Convert blob to base64 for transmission
+    const reader = new FileReader();
+    const base64 = await new Promise((resolve) => {
+      reader.onloadend = () => resolve(reader.result);
+      reader.readAsDataURL(blob);
+    });
+
+    return { success: true, data: base64 };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Import data from exported JSON
+ */
+async function handleImportData(importedData) {
+  try {
+    if (!importedData || typeof importedData !== 'object') {
+      return { success: false, error: 'Invalid data format' };
+    }
+
+    // Validate that this looks like an export file
+    const hasValidStructure =
+      importedData.hasOwnProperty('interactions') ||
+      importedData.hasOwnProperty('settings') ||
+      importedData.hasOwnProperty('userCategories') ||
+      importedData.hasOwnProperty('metadata');
+
+    if (!hasValidStructure) {
+      return {
+        success: false,
+        error: 'File does not appear to be a valid export. Missing expected data structure.'
+      };
+    }
+
+    // Statistics for feedback
+    const stats = {
+      interactions: 0,
+      categories: 0,
+      accounts: 0,
+      settings: false
+    };
+
+    // Import interactions (for all platforms: Instagram, Twitter, LinkedIn, TikTok, Threads, YouTube)
+    if (Array.isArray(importedData.interactions)) {
+      await chrome.storage.local.set({ interactions: importedData.interactions });
+      stats.interactions = importedData.interactions.length;
+      console.log(`Imported ${stats.interactions} interactions`);
+    }
+
+    // Import interaction index
+    if (importedData.interactionIndex && typeof importedData.interactionIndex === 'object') {
+      await chrome.storage.local.set({ interactionIndex: importedData.interactionIndex });
+    }
+
+    // Import user categories
+    if (Array.isArray(importedData.userCategories)) {
+      await chrome.storage.local.set({ userCategories: importedData.userCategories });
+      stats.categories = importedData.userCategories.length;
+      console.log(`Imported ${stats.categories} user categories`);
+    }
+
+    // Import user accounts
+    if (importedData.userAccounts && typeof importedData.userAccounts === 'object') {
+      await chrome.storage.local.set({ userAccounts: importedData.userAccounts });
+      // Count total accounts across all platforms
+      stats.accounts = Object.values(importedData.userAccounts).reduce((sum, platformAccounts) => {
+        return sum + (Array.isArray(platformAccounts) ? platformAccounts.length : 0);
+      }, 0);
+      console.log(`Imported ${stats.accounts} user accounts`);
+    }
+
+    // Import settings (merge with defaults to ensure compatibility)
+    if (importedData.settings && typeof importedData.settings === 'object') {
+      const defaultSettings = storageManager.getDefaultSettings();
+      const mergedSettings = { ...defaultSettings, ...importedData.settings };
+      await chrome.storage.local.set({ settings: mergedSettings });
+      stats.settings = true;
+      console.log('Imported settings');
+    }
+
+    // Import metadata
+    if (importedData.metadata && typeof importedData.metadata === 'object') {
+      await chrome.storage.local.set({ metadata: importedData.metadata });
+    }
+
+    // Import AI queue if present
+    if (Array.isArray(importedData.aiQueue)) {
+      await chrome.storage.local.set({ aiQueue: importedData.aiQueue });
+    }
+
+    // Import auto-scroll daily count if present
+    if (importedData.autoScrollDailyCount && typeof importedData.autoScrollDailyCount === 'object') {
+      await chrome.storage.local.set({ autoScrollDailyCount: importedData.autoScrollDailyCount });
+    }
+
+    // Update metadata to reflect the import
+    await storageManager.updateMetadata();
+
+    console.log('Import completed successfully', stats);
+
+    return {
+      success: true,
+      stats,
+      message: 'Data imported successfully'
+    };
+  } catch (error) {
+    console.error('Error importing data:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Process AI queue
+ */
+async function handleProcessAIQueue() {
+  processAIQueue();
+  return { success: true };
+}
+
+/**
+ * Helper: Find dashboard tab(s)
+ */
+async function findDashboardTabs() {
+  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('dashboard/dashboard.html') });
+  return tabs.map(tab => tab.id);
+}
+
+/**
+ * Helper: Send progress message to all dashboard tabs
+ */
+async function sendProgressToDashboard(type, payload) {
+  const tabIds = await findDashboardTabs();
+  for (const tabId of tabIds) {
+    try {
+      await chrome.tabs.sendMessage(tabId, { type, ...payload });
+    } catch (error) {
+      console.warn('Could not send message to dashboard tab:', error);
+    }
+  }
+}
+
+
+/**
+ * Process AI categorization queue (background task)
+ */
+let isProcessing = false;
+let shouldCancelAI = false;
+
+async function processAIQueue() {
+  // Prevent concurrent processing
+  if (isProcessing) {
+    console.log('AI queue already being processed');
+    return;
+  }
+
+  isProcessing = true;
+  shouldCancelAI = false; // Reset cancellation flag
+
+  try {
+    // Reinitialize AI categorizer to get latest settings
+    await aiCategorizer.init();
+
+    // Get queue
+    const queue = await storageManager.getAIQueue();
+
+    if (queue.length === 0) {
+      console.log('AI queue is empty');
+      return;
+    }
+
+    console.log(`Processing AI queue: ${queue.length} items`);
+
+    // Send start message to dashboard
+    await sendProgressToDashboard('AI_CATEGORIZATION_STARTED', { total: queue.length });
+
+    // Fetch existing categories with usage counts for smarter AI categorization
+    const existingCategories = await storageManager.getCategoriesWithUsage();
+    console.log(`Loaded ${existingCategories.length} categories for AI context`);
+
+    // Process in batches of 5
+    const batchSize = 5;
+    let totalProcessed = 0;
+    let totalSuccessful = 0;
+    let totalFailed = 0;
+
+    // Process all items in batches
+    while (totalProcessed < queue.length) {
+      const batch = queue.slice(totalProcessed, totalProcessed + batchSize);
+      const processedIds = [];
+
+      for (const interactionId of batch) {
+        // Check cancellation before each item
+        if (shouldCancelAI) {
+          console.log('AI categorization cancelled by user');
+          break;
+        }
+
+        try {
+          const interaction = await storageManager.getInteractionById(interactionId);
+
+          // Skip if already processed or not found
+          if (!interaction || interaction.aiProcessed) {
+            processedIds.push(interactionId);
+            totalProcessed++;
+            continue;
+          }
+
+          // Categorize with AI, passing existing categories for context
+          console.log(`Categorizing interaction: ${interactionId}`);
+          const { categories, failureReason } = await aiCategorizer.categorizeContent(interaction, existingCategories);
+
+          // Update interaction with categories
+          await storageManager.updateInteraction(interactionId, {
+            categories: categories,
+            aiProcessed: true,
+            aiFailureReason: failureReason || null, // Store failure reason
+          });
+
+          // Track success/failure
+          if (failureReason) {
+            totalFailed++;
+          } else {
+            totalSuccessful++;
+
+            // Send category update notification for each new category
+            for (const category of categories) {
+              await sendProgressToDashboard('AI_CATEGORIZATION_CATEGORY_UPDATED', {
+                category: category,
+                itemId: interactionId
+              });
+            }
+          }
+
+          // Notify content script of AI categorization result
+          // Note: Save already succeeded, we're just updating with AI results
+          try {
+            if (interaction.tabId) {
+              await chrome.tabs.sendMessage(interaction.tabId, {
+                type: 'INTERACTION_SAVED_STATUS',
+                success: !failureReason,
+                saveSuccess: true, // Save was successful (we're just updating AI status)
+                interactionType: interaction.interactionType,
+                platform: interaction.platform,
+                categories: categories, // categories is already an array
+                aiProcessed: true,
+                aiFailureReason: failureReason || null,
+              });
+            }
+          } catch (tabError) {
+            console.warn('Could not notify tab:', tabError);
+          }
+
+          processedIds.push(interactionId);
+          totalProcessed++;
+          console.log(`Categorized as: ${categories.join(', ')}`);
+
+          // Send progress update
+          await sendProgressToDashboard('AI_CATEGORIZATION_PROGRESS', {
+            current: totalProcessed,
+            total: queue.length,
+            itemId: interactionId
+          });
+
+        } catch (error) {
+          console.error(`Error processing interaction ${interactionId}:`, error);
+          totalFailed++;
+          totalProcessed++;
+
+          // Store failure reason for the interaction
+          await storageManager.updateInteraction(interactionId, {
+            aiProcessed: false,
+            aiFailureReason: error.message,
+          });
+
+          // Send progress update even on failure
+          await sendProgressToDashboard('AI_CATEGORIZATION_PROGRESS', {
+            current: totalProcessed,
+            total: queue.length,
+            itemId: interactionId
+          });
+
+          // Notify content script of AI categorization failure
+          // Note: Save already succeeded, only AI categorization failed
+          try {
+            if (interaction?.tabId) {
+              await chrome.tabs.sendMessage(interaction.tabId, {
+                type: 'INTERACTION_SAVED_STATUS',
+                success: false,
+                saveSuccess: true, // Save was successful (only AI failed)
+                interactionType: interaction.interactionType,
+                platform: interaction.platform,
+                categories: ['Uncategorized'],
+                aiProcessed: false,
+                aiFailureReason: error.message,
+              });
+            }
+          } catch (tabError) {
+            console.warn('Could not notify tab of error:', tabError);
+          }
+          // Continue with next item instead of failing entire batch
+        }
+      }
+
+      // Remove processed items from queue
+      await storageManager.removeFromAIQueue(processedIds);
+
+      // Check cancellation before next batch
+      if (shouldCancelAI) {
+        break;
+      }
+
+      // Small delay between batches
+      if (totalProcessed < queue.length) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+
+    // Send appropriate completion message
+    if (shouldCancelAI) {
+      await sendProgressToDashboard('AI_CATEGORIZATION_CANCELLED', {
+        successful: totalSuccessful,
+        total: queue.length
+      });
+      console.log('AI queue processing cancelled');
+    } else {
+      await sendProgressToDashboard('AI_CATEGORIZATION_COMPLETE', {
+        total: totalProcessed,
+        successful: totalSuccessful,
+        failed: totalFailed
+      });
+      console.log('AI queue processing complete');
+    }
+  } catch (error) {
+    console.error('Error processing AI queue:', error);
+
+    // Send error completion message
+    await sendProgressToDashboard('AI_CATEGORIZATION_COMPLETE', {
+      total: 0,
+      successful: 0,
+      failed: 0,
+      error: error.message
+    });
+  } finally {
+    isProcessing = false;
+    shouldCancelAI = false; // Reset flag
+  }
+}
+
+// Set up periodic AI queue processing (every 5 minutes)
+chrome.alarms.create('process-ai-queue', { periodInMinutes: 5 });
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'process-ai-queue') {
+    console.log('Periodic AI queue processing triggered');
+    processAIQueue();
+  }
+});
+
+// Process queue on startup
+setTimeout(processAIQueue, 5000); // Wait 5 seconds after startup
+
+console.log('Background service worker initialized');
+
+/**
+ * Get user accounts
+ */
+async function handleGetUserAccounts() {
+  try {
+    const accounts = await storageManager.getUserAccounts();
+    return { success: true, data: accounts };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Save user accounts
+ */
+async function handleSaveUserAccounts(accounts) {
+  try {
+    const success = await storageManager.saveUserAccounts(accounts);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Add user account
+ */
+async function handleAddUserAccount(platform, accountInfo) {
+  try {
+    const success = await storageManager.addUserAccount(platform, accountInfo);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Update user account
+ */
+async function handleUpdateUserAccount(platform, accountId, updates) {
+  try {
+    const success = await storageManager.updateUserAccount(platform, accountId, updates);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * Remove user account
+ */
+async function handleRemoveUserAccount(platform, accountId) {
+  try {
+    const success = await storageManager.removeUserAccount(platform, accountId);
+    return { success };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+}

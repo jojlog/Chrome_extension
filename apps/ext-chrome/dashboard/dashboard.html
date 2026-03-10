@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content Tracker Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+
+<body>
+  <div class="dashboard-container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>Content Tracker</h1>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <h3>Platforms</h3>
+          <ul class="platform-list">
+            <li data-platform="all" class="active">All Platforms</li>
+            <li data-platform="instagram">Instagram</li>
+            <li data-platform="threads">Threads</li>
+            <li data-platform="youtube">YouTube</li>
+            <li data-platform="twitter">Twitter</li>
+            <li data-platform="linkedin">LinkedIn</li>
+            <li data-platform="tiktok">TikTok</li>
+          </ul>
+        </div>
+
+        <div class="nav-section">
+          <h3>Categories</h3>
+          <p class="category-hint">Folder Hierarchy: You can now use hierarchy in categories (e.g., Tech/AI, Tech/Web)
+            and they will render as a nested tree in the sidebar with expand/collapse support.</p>
+          <ul id="category-list" class="category-list">
+            <li data-category="all" class="active">All Categories</li>
+          </ul>
+        </div>
+      </nav>
+
+      <div class="sidebar-footer">
+        <button id="settings-btn" class="btn-sidebar">Settings</button>
+        <button id="export-btn" class="btn-sidebar">Export Data</button>
+        <button id="import-btn" class="btn-sidebar">Import Data</button>
+        <input type="file" id="import-file-input" accept=".json" style="display: none;">
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="dashboard-header">
+        <div class="search-bar">
+          <input type="text" id="search-input" placeholder="Search saved content...">
+          <button id="category-filter-btn" class="btn-secondary search-filter-btn" type="button" aria-expanded="false">
+            <span class="search-filter-label">Filter</span>
+            <span id="category-filter-count" class="search-filter-count hidden">0</span>
+          </button>
+          <div id="category-filter-panel" class="search-filter-panel hidden" role="dialog"
+            aria-label="Category filters">
+            <div class="filter-section">
+              <div class="filter-section-title">Include categories</div>
+              <div id="include-category-list" class="filter-category-list"></div>
+            </div>
+            <div class="filter-section">
+              <div class="filter-section-title">Exclude categories</div>
+              <div id="exclude-category-list" class="filter-category-list"></div>
+            </div>
+            <div class="filter-actions">
+              <button id="clear-category-filters" class="btn-secondary" type="button">Clear</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button id="select-mode-btn" class="btn-secondary">Select</button>
+          <button id="pull-local-btn" class="btn-secondary" type="button">Pull Local</button>
+          <select id="sort-select">
+            <option value="date-desc">Newest First</option>
+            <option value="date-asc">Oldest First</option>
+            <option value="engagement">Most Engagement</option>
+            <option value="duration">Most Viewed</option>
+          </select>
+
+          <button id="view-toggle" class="btn-toggle">List View</button>
+        </div>
+      </header>
+
+      <div id="category-ai-suggestion" class="category-ai-suggestion hidden">
+        <div class="category-ai-text">
+          <div class="category-ai-title">AI suggestions</div>
+          <div class="category-ai-sub">
+            Find more content that fits <span id="category-ai-name" class="category-ai-name"></span>.
+          </div>
+        </div>
+        <button id="category-ai-btn" class="btn-secondary" type="button">Find similar</button>
+      </div>
+
+      <div id="content-area" class="content-area">
+        <div class="loading">Loading your saved content...</div>
+      </div>
+
+      <!-- Selection Action Bar (appears when items selected) -->
+      <div id="selection-bar" class="selection-bar hidden">
+        <div class="selection-info">
+          <span id="selection-count">0</span> items selected
+        </div>
+        <div class="selection-actions">
+          <button id="select-all" class="btn-secondary">Select All</button>
+          <button id="bulk-edit-categories" class="btn-primary">Edit Categories</button>
+          <button id="bulk-delete" class="btn-secondary delete">Delete</button>
+          <button id="cancel-selection" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Settings Modal -->
+      <div id="settings-modal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Settings</h2>
+            <button id="close-settings" class="btn-close">&times;</button>
+          </div>
+
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="openai-api-key">OpenAI API Key (Optional)</label>
+              <input type="password" id="openai-api-key" placeholder="sk-proj-...">
+              <small>Enter your OpenAI API key. <a href="https://platform.openai.com/api-keys" target="_blank">Get one
+                  here</a></small>
+            </div>
+
+            <div class="form-group">
+              <label for="gemini-api-key">Google Gemini API Key (Optional)</label>
+              <input type="password" id="gemini-api-key" placeholder="AIza...">
+              <small>Enter your Gemini API key. <a href="https://makersuite.google.com/app/apikey" target="_blank">Get
+                  one here</a></small>
+            </div>
+
+            <div class="form-group">
+              <small style="color: #667eea; font-weight: bold;">💡 Tip: If you enter both API keys, OpenAI will be used
+                first, and Gemini will be used automatically as a fallback.</small>
+            </div>
+
+            <!-- Legacy fields for backward compatibility (hidden) -->
+            <div class="form-group" style="display: none;">
+              <label for="ai-provider">AI Provider (Legacy)</label>
+              <select id="ai-provider">
+                <option value="openai">OpenAI (GPT)</option>
+                <option value="gemini">Google Gemini</option>
+              </select>
+            </div>
+
+            <div class="form-group" style="display: none;">
+              <label for="api-key">API Key (Legacy)</label>
+              <input type="password" id="api-key" placeholder="Enter your API key">
+            </div>
+
+            <div class="form-group">
+              <label for="time-threshold">Time Threshold (seconds)</label>
+              <input type="number" id="time-threshold" min="1" max="60" value="5">
+              <small>Minimum time viewing a post to consider saving it</small>
+            </div>
+
+            <div class="form-group">
+              <label>Enabled Platforms</label>
+              <div class="checkbox-group">
+                <label><input type="checkbox" id="enable-instagram" checked> Instagram</label>
+                <label><input type="checkbox" id="enable-threads" checked> Threads</label>
+                <label><input type="checkbox" id="enable-youtube" checked> YouTube</label>
+                <label><input type="checkbox" id="enable-twitter" checked> Twitter</label>
+                <label><input type="checkbox" id="enable-linkedin" checked> LinkedIn</label>
+                <label><input type="checkbox" id="enable-tiktok" checked> TikTok</label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Saved/Liked Import</label>
+              <div class="checkbox-group">
+                <label><input type="checkbox" id="auto-import-saved"> Auto-import from saved/liked pages</label>
+                <label><input type="checkbox" id="suppress-import-notifications"> Suppress import notifications</label>
+                <label><input type="checkbox" id="skip-ai-for-imports"> Skip AI categorization for imports</label>
+                <label><input type="checkbox" id="enable-fast-scroll" checked> Enable auto-speed up when scrolling
+                  through saved posts</label>
+              </div>
+              <small>Imports only run when you visit saved/liked pages and can be noisy without these controls.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="auto-scroll-limit">Auto-Scroll Limit (per session)</label>
+              <input type="number" id="auto-scroll-limit" min="1" max="200" value="200">
+              <small>Maximum posts to process per session (max 200). Counts both newly saved and already-saved posts.
+                The extension will show saved and skipped counts separately.</small>
+            </div>
+
+            <div class="form-group">
+              <label>Manage Custom Categories</label>
+              <div id="custom-categories-list" class="category-edit-list">
+                <!-- Custom categories will be rendered here by JavaScript -->
+              </div>
+              <div class="category-add-group">
+                <input type="text" id="new-category-input" placeholder="Add new category">
+                <button id="add-category-btn" class="btn-secondary">Add</button>
+              </div>
+              <small>Add, edit, or remove categories that you use for manual classification.</small>
+            </div>
+
+            <div class="form-group">
+              <label>Connected Accounts</label>
+              <div id="accounts-list" class="accounts-list">
+                <!-- Accounts will be rendered here -->
+              </div>
+              <small>Accounts are automatically added when you browse social media.</small>
+            </div>
+
+            <!-- Separator for better UI -->
+            <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+
+          </div>
+
+          <div class="modal-footer">
+            <button id="save-settings" class="btn-primary">Save Settings</button>
+            <button id="cancel-settings" class="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Category Modal -->
+      <div id="ai-category-modal" class="modal hidden">
+        <div class="modal-content modal-content-wide">
+          <div class="modal-header">
+            <h2>AI Category Builder</h2>
+            <button id="close-ai-category" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label for="ai-category-name">Category name</label>
+              <input type="text" id="ai-category-name" list="ai-category-options" placeholder="e.g. Design Systems">
+              <datalist id="ai-category-options"></datalist>
+              <small>Create a new category or pick an existing one.</small>
+            </div>
+
+            <div class="form-group">
+              <label>Match sensitivity</label>
+              <div class="ai-similarity-row">
+                <input type="range" id="ai-similarity-slider" min="0" max="100" step="1" value="50">
+                <span id="ai-similarity-label" class="ai-hint">Balanced</span>
+              </div>
+              <small>Strict = fewer, closer matches. Loose = more, broader matches.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-filter-mode">Filter scope</label>
+              <select id="ai-filter-mode" class="ai-filter-select">
+                <option value="text">Text only</option>
+                <option value="full">Text + author + platform</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label>Select example items</label>
+              <input type="text" id="ai-seed-filter" class="ai-filter-input" placeholder="Filter example items...">
+              <div id="ai-seed-list" class="ai-item-list"></div>
+              <small>Pick a few items that best represent the category.</small>
+            </div>
+
+            <div class="ai-modal-actions">
+              <button id="ai-find-similar" class="btn-secondary">Find similar</button>
+              <span id="ai-similar-status" class="ai-hint"></span>
+            </div>
+
+            <div class="form-group">
+              <label>Suggested matches</label>
+              <input type="text" id="ai-suggested-filter" class="ai-filter-input"
+                placeholder="Filter suggested matches...">
+              <div id="ai-suggested-list" class="ai-item-list"></div>
+              <small>Review and uncheck anything you don’t want to include.</small>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="ai-apply-category" class="btn-primary">Apply category</button>
+            <button id="ai-cancel-category" class="btn-secondary">Cancel</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Category Organizer Modal -->
+      <div id="ai-reorg-modal" class="modal hidden">
+        <div class="modal-content modal-content-wide">
+          <div class="modal-header">
+            <h2>AI Category Organizer</h2>
+            <button id="close-ai-reorg" class="btn-close">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>Select categories to reorganize</label>
+              <input type="text" id="ai-reorg-search" class="ai-filter-input" placeholder="Filter categories...">
+              <div id="ai-reorg-category-list" class="ai-reorg-list"></div>
+              <small>Select categories you want to merge, split, or reorder.</small>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-reorg-action">Action</label>
+              <select id="ai-reorg-action" class="ai-filter-select">
+                <option value="merge">Merge</option>
+                <option value="split">Split</option>
+                <option value="reorder">Reorder / move</option>
+                <option value="organize">Reorganize hierarchy</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="ai-reorg-goal">Notes (optional)</label>
+              <input type="text" id="ai-reorg-goal" class="ai-filter-input"
+                placeholder="e.g. group by platform, keep AI at top-level">
+            </div>
+
+            <div class="ai-modal-actions">
+              <button id="ai-reorg-generate" class="btn-primary">Get suggestions</button>
+              <span id="ai-reorg-status" class="ai-hint"></span>
+            </div>
+
+            <div class="form-group">
+              <label>Suggestions</label>
+              <div id="ai-reorg-results" class="ai-reorg-results"></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button id="ai-reorg-apply" class="btn-primary" disabled>Apply changes</button>
+            <button id="ai-reorg-cancel" class="btn-secondary">Close</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- AI Floating Action Button -->
+  <div id="ai-fab" class="ai-fab">
+    <button id="ai-fab-btn" class="ai-fab-btn" aria-label="AI tools">
+      <span class="ai-fab-icon">✨</span>
+      <span class="ai-fab-text">AI</span>
+    </button>
+    <div id="ai-fab-menu" class="ai-fab-menu">
+      <div class="ai-fab-menu-header">AI Assist</div>
+      <button id="ai-categorize-uncategorized" class="ai-menu-item">Categorize uncategorized</button>
+      <button id="ai-auto-categorize" class="ai-menu-item">Create category from examples</button>
+      <button id="ai-reorg-categories" class="ai-menu-item">Reorganize categories</button>
+    </div>
+  </div>
+
+  <!-- AI Categorization Progress Indicator -->
+  <div id="ai-categorization-progress" class="ai-progress-indicator hidden">
+    <div class="ai-progress-content">
+      <div class="ai-progress-text">
+        <span class="ai-progress-icon">🤖</span>
+        <span>AI Categorizing: <strong id="ai-progress-count">0/0</strong></span>
+      </div>
+      <div class="ai-progress-actions">
+        <button id="ai-cancel-btn" class="ai-cancel-btn">Cancel</button>
+        <button id="ai-refresh-suggestion" class="ai-refresh-btn hidden">Refresh to see updates</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="notification-manager.js"></script>
+  <script src="dashboard.js" type="module"></script>
+</body>
+
+</html>

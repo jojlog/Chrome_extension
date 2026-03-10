@@ -1,8 +1,7 @@
 /**
- * Runtime copy for active Chrome extension path.
+ * Canonical shared utility source.
  *
- * Canonical source: packages/core/utils.js
- * Keep synchronized manually until bundler adoption.
+ * Runtime copy currently exists at lib/utils.js until bundler adoption.
  */
 
 /**
