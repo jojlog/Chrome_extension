@@ -43,6 +43,12 @@
 - [ ] `apps/ext-chrome/feature-flags.inline.js` synchronized (until bundler adoption).
 - [ ] `docs/parity-matrix.md` updated.
 
+## Safari MVP Checklist
+
+- [ ] `npm run check:safari-mvp` passes (if Safari files/scripts changed).
+- [ ] `docs/safari-mvp.md` updated (if Safari workflow changed).
+- [ ] Safari features remain OFF until parity QA is complete.
+
 ## Verification
 
 - [ ] Existing user data/storage schema remains compatible.

@@ -1,6 +1,6 @@
 # Monorepo Migration Plan (Safe, Incremental)
 
-Last updated: 2026-03-10
+Last updated: 2026-03-11
 
 Goal:
 - Keep runtime stable while moving toward `packages/*` source-of-truth + `apps/*` platform layout.
@@ -29,6 +29,7 @@ Completed safely (no runtime wiring changes):
 - PR-C: adapter contract hardened (`apps/ext-chrome`, `apps/ext-safari`, `apps/web`, `apps/ios-app`).
 - PR-D: popup/dashboard source mirrored under `apps/ext-chrome` + UI sync check.
 - PR-E: background service worker mirrored under `apps/ext-chrome` + background sync check.
+- PR-G: Safari MVP scaffolding (`build/convert/check` scripts + guide docs) added without runtime rewiring.
 - Feature-flag source and parity/PR governance docs added.
 - MV3/flag/storage/adapter/UI/background verification scripts added.
 
@@ -80,6 +81,18 @@ Acceptance criteria:
 - For each active root entry, mapped future input exists.
 - Sync checks pass.
 
+## Phase 4.5 (Completed - Safari MVP Scaffold)
+
+1. Add Safari staging bundle build script from active runtime sources.
+2. Add Safari Xcode conversion script wrapper.
+3. Add Safari scaffold verification and operational guide.
+4. Keep `ext-safari` feature flags OFF until Safari QA is completed.
+
+Acceptance criteria:
+- No Chrome runtime wiring change.
+- Safari conversion path reproducible on macOS with Xcode tools.
+- Repository checks continue to pass.
+
 ## Phase 5 (Bundler adoption; next major milestone)
 
 1. Introduce esbuild/rollup pipeline.
@@ -120,3 +133,4 @@ Acceptance criteria:
 4. PR-D: popup/dashboard source mirror in `apps/ext-chrome`. (done)
 5. PR-E: background/source mirror + sync tooling expansion. (done)
 6. PR-F: bundler introduction.
+7. PR-G: Safari MVP scaffold (build/convert/check).

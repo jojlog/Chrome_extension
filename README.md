@@ -39,6 +39,10 @@ A powerful Chrome extension that automatically tracks and categorizes your socia
 - Background mirror sync check: `npm run check:background-sync`
 - Manual sync reference: `docs/sync-manual.md`
 - Platform adapter notes: `docs/platform-adapters.md`
+- Safari MVP guide: `docs/safari-mvp.md`
+- Safari scaffold check: `npm run check:safari-mvp`
+- Safari staging build: `npm run build:safari-mvp`
+- Safari converter (macOS + Xcode): `npm run convert:safari-mvp`
 
 ## Installation
 

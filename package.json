@@ -11,6 +11,9 @@
     "check:ui-sync": "node scripts/check-ui-sync.js",
     "check:background-sync": "node scripts/check-background-sync.js",
     "check:parity": "cat docs/parity-matrix.md",
-    "check:repo": "npm run check:mv3-content-script && npm run check:flag-sync && npm run check:storage-sync && npm run check:adapter-contract && npm run check:ui-sync && npm run check:background-sync"
+    "check:repo": "npm run check:mv3-content-script && npm run check:flag-sync && npm run check:storage-sync && npm run check:adapter-contract && npm run check:ui-sync && npm run check:background-sync && npm run check:safari-mvp",
+    "check:safari-mvp": "node scripts/check-safari-mvp.js",
+    "build:safari-mvp": "node scripts/build-safari-mvp.js",
+    "convert:safari-mvp": "node scripts/convert-safari-mvp.js"
   }
 }
