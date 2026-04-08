@@ -46,22 +46,28 @@ class BasePlatformTracker {
       startTime: 0,
       lastScrollHeight: 0,
       noGrowthStreak: 0,
-      maxItems: 50,
+      maxItems: 200, // Will be updated from settings
       maxDurationMs: 5 * 60 * 1000,
       stepDelayMs: 1000,
       minNoGrowthChecks: 3,
       stepCount: 0,
       dailyLimit: 200,
       dailyCount: 0,
-      microPauseEveryMin: 5,
-      microPauseEveryMax: 8
+      microPauseEveryMin: 8,
+      microPauseEveryMax: 14,
+      fastScrollMode: false,
+      consecutiveSavedBatches: 0,
+      savedPostsSkipped: 0 // Track how many already-saved posts we've skipped
     };
     this.autoScrollOverlay = null;
     this.autoScrollInterruptHandler = null;
     this.autoScrollContainer = null;
     this.savedStatusCache = new Map();
+    this.favoriteStatusCache = new Map();
     this.currentIndicator = null;
     this.currentIndicatorPost = null;
+    this.runtimeUnavailableUntil = 0;
+    this.manualSaveSweepInterval = null;
 
     console.log(`${this.platform} tracker initializing...`);
     this.init();
@@ -74,8 +80,8 @@ class BasePlatformTracker {
   setupMessageListener() {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.type === 'INTERACTION_SAVED_STATUS') {
-        // Show the status popup
-        if (window.statusPopupManager) {
+        // Show the status popup (skip during auto-scroll — overlay shows the count)
+        if (window.statusPopupManager && !this.autoScrollState.running) {
           window.statusPopupManager.show({
             success: message.success,
             interactionType: message.interactionType || 'interaction',
@@ -122,11 +128,131 @@ class BasePlatformTracker {
     });
   }
 
+  async sendRuntimeMessageWithTimeout(message, timeoutMs = 3000) {
+    if (!this.ensureExtensionContext()) {
+      throw new Error('Extension context invalidated');
+    }
+    if (Date.now() < this.runtimeUnavailableUntil) {
+      throw new Error('Runtime unavailable');
+    }
+
+    // Pre-wake the service worker with a fast ping before sending the real message
+    await this._pingServiceWorker();
+
+    const maxRetries = 2;
+    let lastError = null;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        // On retry, wait with exponential backoff
+        if (attempt > 0) {
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+          // Re-ping on retries to ensure service worker is awake
+          await this._pingServiceWorker();
+        }
+        const result = await this._sendSingleMessage(message, timeoutMs);
+        // Success — clear any unavailability window
+        this.runtimeUnavailableUntil = 0;
+        return result;
+      } catch (error) {
+        lastError = error;
+        const msg = String(error?.message || '');
+        // If extension context is gone, don't retry
+        if (msg.includes('context invalidated')) {
+          this.handleInvalidContext();
+          throw error;
+        }
+        // If receiving end doesn't exist, service worker not running — short penalty, don't retry
+        if (msg.includes('Receiving end does not exist')) {
+          this.runtimeUnavailableUntil = Date.now() + 10000;
+          throw error;
+        }
+        // On timeout, try again (service worker may be waking up)
+        if (msg.includes('timeout') && attempt < maxRetries) {
+          continue;
+        }
+      }
+    }
+
+    // All retries exhausted
+    if (lastError?.message?.includes('timeout')) {
+      this.runtimeUnavailableUntil = Date.now() + 5000;
+    }
+    throw lastError;
+  }
+
+  /**
+   * Send a fast PING to the service worker to wake it from hibernation.
+   * MV3 service workers hibernate after ~30s of inactivity.
+   * This is a fire-and-forget best-effort wake-up.
+   */
+  async _pingServiceWorker() {
+    try {
+      await Promise.race([
+        new Promise((resolve, reject) => {
+          try {
+            chrome.runtime.sendMessage({ type: 'PING' }, (response) => {
+              if (chrome.runtime.lastError) {
+                // Silently ignore — service worker might not be ready yet
+                resolve(null);
+                return;
+              }
+              resolve(response);
+            });
+          } catch (e) {
+            resolve(null);
+          }
+        }),
+        new Promise(resolve => setTimeout(resolve, 1000)) // Max 1s wait for ping
+      ]);
+    } catch (e) {
+      // Silently ignore ping failures
+    }
+  }
+
+  _sendSingleMessage(message, timeoutMs) {
+    return Promise.race([
+      new Promise((resolve, reject) => {
+        try {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+              return;
+            }
+            resolve(response);
+          });
+        } catch (error) {
+          reject(error);
+        }
+      }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime message timeout')), timeoutMs))
+    ]);
+  }
+
+  ensureExtensionContext() {
+    const valid = typeof chrome !== 'undefined'
+      && !!chrome.runtime?.id
+      && !!chrome.storage?.local;
+    if (!valid) {
+      this.runtimeUnavailableUntil = Date.now() + 30000;
+      this.handleInvalidContext();
+    }
+    return valid;
+  }
+
+  handleInvalidContext() {
+    if (this.autoScrollState?.running) {
+      this.stopAutoScrollImport('stopped');
+      this.updateAutoScrollOverlay('Stopped', 'Extension reloaded. Refresh the page.', true);
+    }
+  }
+
   async init() {
     await this.waitForPageLoad();
 
     this.settings = await this.loadSettings();
     this.setupSettingsListener();
+    this.markTrackerInjected();
 
     // Detect page mode (saved, bookmarks, likes, etc.)
     this.pageMode = this.detectPageMode();
@@ -136,6 +262,7 @@ class BasePlatformTracker {
     this.setupMutationObserver();
     this.setupEventListeners();
     this.setupTimeThresholdListener();
+    this.startManualSaveButtonSweep();
 
     // If on a saved/liked page, trigger bulk capture after a short delay
     if (this.shouldAutoImport()) {
@@ -163,6 +290,15 @@ class BasePlatformTracker {
       childList: true,
       subtree: true
     });
+  }
+
+  markTrackerInjected() {
+    try {
+      document.documentElement.setAttribute('data-ct-tracker', this.platform);
+      document.documentElement.setAttribute('data-ct-manual-save', '1');
+    } catch (error) {
+      // ignore
+    }
   }
 
   handleMutations(mutations) {
@@ -211,6 +347,7 @@ class BasePlatformTracker {
       this.timeTracker.observePost(postElement, postId);
     }
     postElement.dataset.postId = postId;
+    this.ensureManualSaveButton(postElement);
   }
 
   setupEventListeners() {
@@ -221,6 +358,17 @@ class BasePlatformTracker {
 
   handleClick(event) {
     const target = event.target;
+    const manualButton = target?.closest?.('.ct-manual-save-btn');
+    if (manualButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+      const postElement = this.findPostElement(manualButton);
+      if (postElement) {
+        this.handleManualSaveClick(postElement, manualButton);
+      }
+      return;
+    }
     if (this.isLikeButton(target)) {
       const postElement = this.findPostElement(target);
       if (postElement && !this.isAlreadyLiked(target)) {
@@ -264,24 +412,280 @@ class BasePlatformTracker {
     });
   }
 
-  async loadSettings() {
+  startManualSaveButtonSweep() {
+    if (this.manualSaveSweepInterval) return;
+    const sweep = () => {
+      if (!this.ensureExtensionContext()) return;
+      const selectors = this.getPostContainerSelectors();
+      if (!selectors || selectors.length === 0) return;
+      const posts = ContentExtractor.findAllWithFallback(document, selectors);
+      posts.forEach(post => this.ensureManualSaveButton(post));
+    };
+    sweep();
+    this.manualSaveSweepInterval = setInterval(sweep, 2000);
+  }
+
+  ensureManualSaveButton(postElement) {
+    if (!postElement) return;
+    const existingSave = postElement.querySelector('.ct-manual-save-btn');
+    const existingFavorite = postElement.querySelector('.ct-manual-favorite-btn');
+    const hasSaveState = !!existingSave?.dataset?.state;
+    const hasFavoriteState = !!existingFavorite?.dataset?.state;
+    if (existingSave && existingFavorite && hasSaveState && hasFavoriteState) return;
+
+    const computed = window.getComputedStyle(postElement);
+    if (computed.position === 'static') {
+      postElement.dataset.ctOriginalPosition = 'static';
+      postElement.style.position = 'relative';
+    }
+
+    let favoriteButton = existingFavorite;
+    if (!favoriteButton) {
+      favoriteButton = document.createElement('button');
+      favoriteButton.type = 'button';
+      favoriteButton.className = 'ct-manual-favorite-btn';
+      favoriteButton.textContent = '☆';
+      favoriteButton.setAttribute('aria-label', 'Favorite in Content Tracker');
+      favoriteButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        this.handleManualFavoriteClick(postElement, favoriteButton);
+      }, true);
+    }
+
+    let saveButton = existingSave;
+    if (!saveButton) {
+      saveButton = document.createElement('button');
+      saveButton.type = 'button';
+      saveButton.className = 'ct-manual-save-btn';
+      saveButton.textContent = 'Save';
+      saveButton.setAttribute('aria-label', 'Save to Content Tracker');
+      saveButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        this.handleManualSaveClick(postElement, saveButton);
+      }, true);
+    }
+
+    if (!existingFavorite) {
+      if (existingSave) {
+        postElement.insertBefore(favoriteButton, existingSave);
+      } else {
+        postElement.appendChild(favoriteButton);
+      }
+      this.setManualFavoriteButtonState(favoriteButton, 'ready');
+      this.isPostFavorite(postElement).then((favorited) => {
+        if (favorited) this.setManualFavoriteButtonState(favoriteButton, 'favorited');
+      }).catch(() => { });
+    }
+
+    if (!existingSave) {
+      postElement.appendChild(saveButton);
+      this.setManualSaveButtonState(saveButton, 'ready');
+      this.isPostSaved(postElement).then((saved) => {
+        if (saved) this.setManualSaveButtonState(saveButton, 'saved');
+      }).catch(() => { });
+    }
+
+    if (existingFavorite && !existingFavorite.dataset.state) {
+      this.setManualFavoriteButtonState(existingFavorite, 'ready');
+      this.isPostFavorite(postElement).then((favorited) => {
+        if (favorited) this.setManualFavoriteButtonState(existingFavorite, 'favorited');
+      }).catch(() => { });
+    }
+
+    if (existingSave && !existingSave.dataset.state) {
+      this.setManualSaveButtonState(existingSave, 'ready');
+      this.isPostSaved(postElement).then((saved) => {
+        if (saved) this.setManualSaveButtonState(existingSave, 'saved');
+      }).catch(() => { });
+    }
+  }
+
+  setManualSaveButtonState(button, state) {
+    if (!button) return;
+    button.dataset.state = state;
+    button.classList.toggle('ct-manual-save-btn--saved', state === 'saved');
+    button.classList.toggle('ct-manual-save-btn--saving', state === 'saving');
+    button.disabled = state === 'saving' || state === 'saved';
+    if (state === 'saving') {
+      button.textContent = 'Saving...';
+    } else if (state === 'saved') {
+      button.textContent = 'Saved';
+    } else {
+      button.textContent = 'Save';
+    }
+  }
+
+  setManualFavoriteButtonState(button, state) {
+    if (!button) return;
+    button.dataset.state = state;
+    button.classList.toggle('ct-manual-favorite-btn--favorited', state === 'favorited');
+    button.classList.toggle('ct-manual-favorite-btn--saving', state === 'saving');
+    button.disabled = state === 'saving';
+    if (state === 'saving') {
+      button.textContent = '⋯';
+    } else if (state === 'favorited') {
+      button.textContent = '★';
+    } else {
+      button.textContent = '☆';
+    }
+  }
+
+  async handleManualSaveClick(postElement, button) {
+    if (!postElement || !button) return;
+    if (button.dataset.state === 'saving' || button.dataset.state === 'saved') return;
+    this.setManualSaveButtonState(button, 'saving');
+    const saved = await this.captureInteraction('save', postElement);
+    if (saved) {
+      this.setManualSaveButtonState(button, 'saved');
+    } else {
+      this.setManualSaveButtonState(button, 'ready');
+    }
+  }
+
+  async handleManualFavoriteClick(postElement, button) {
+    if (!postElement || !button) return;
+    if (button.dataset.state === 'saving') return;
+    this.setManualFavoriteButtonState(button, 'saving');
+
+    const { contentKey, content } = this.buildContentKeyForPost(postElement);
+    if (!contentKey) {
+      this.setManualFavoriteButtonState(button, 'ready');
+      return;
+    }
+
+    const existing = await this.findInteractionByKey(contentKey);
+    if (!existing) {
+      const saved = await this.captureInteraction('save', postElement, { isFavorite: true });
+      if (saved) {
+        this.savedStatusCache.set(contentKey, true);
+        this.favoriteStatusCache.set(contentKey, true);
+        const saveBtn = postElement.querySelector('.ct-manual-save-btn');
+        if (saveBtn) this.setManualSaveButtonState(saveBtn, 'saved');
+        this.setManualFavoriteButtonState(button, 'favorited');
+      } else {
+        this.setManualFavoriteButtonState(button, 'ready');
+      }
+      return;
+    }
+
+    const nextFavorite = !existing.isFavorite;
+    const updated = await this.updateInteractionFavorite(existing.id, nextFavorite, contentKey);
+    if (updated) {
+      this.favoriteStatusCache.set(contentKey, nextFavorite);
+      this.setManualFavoriteButtonState(button, nextFavorite ? 'favorited' : 'ready');
+      if (nextFavorite) {
+        const saveBtn = postElement.querySelector('.ct-manual-save-btn');
+        if (saveBtn) this.setManualSaveButtonState(saveBtn, 'saved');
+      }
+    } else {
+      this.setManualFavoriteButtonState(button, existing.isFavorite ? 'favorited' : 'ready');
+    }
+  }
+
+  buildContentKeyForPost(postElement) {
+    const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
+    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+    return { contentKey, content };
+  }
+
+  async findInteractionByKey(contentKey) {
+    if (!contentKey) return null;
     try {
-      const response = await chrome.runtime.sendMessage({ type: MESSAGE_TYPES.GET_SETTINGS });
+      // Use local storage directly — fast and always available, no service worker needed
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+      if (interactionIndex && typeof interactionIndex === 'object' && interactionIndex[contentKey]) {
+        const id = interactionIndex[contentKey];
+        return interactions.find(item => item?.id === id) || null;
+      }
+      return interactions.find(item => item?.contentKey === contentKey) || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  async updateInteractionFavorite(id, isFavorite, contentKey = '') {
+    if (!id) return false;
+    try {
+      if (this.ensureExtensionContext()) {
+        const response = await this.sendRuntimeMessageWithTimeout({
+          type: MESSAGE_TYPES.UPDATE_INTERACTION,
+          id,
+          updates: { isFavorite }
+        });
+        if (response && response.success) {
+          return true;
+        }
+      }
+    } catch (error) {
+      // fallback to local storage below
+    }
+
+    try {
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+      const index = interactions.findIndex(item => item?.id === id);
+      if (index === -1) return false;
+      const updated = { ...interactions[index], isFavorite };
+      interactions[index] = updated;
+      await chrome.storage.local.set({ interactions, interactionIndex });
+      if (contentKey) {
+        this.favoriteStatusCache.set(contentKey, isFavorite);
+      }
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async loadSettings() {
+    const fallbackSettings = {
+      autoImportSavedPages: false,
+      autoImportPaused: false,
+      suppressImportNotifications: true,
+      skipAIForImports: true
+    };
+
+    try {
+      const response = await this.sendRuntimeMessageWithTimeout(
+        { type: MESSAGE_TYPES.GET_SETTINGS }
+      );
       if (response && response.success) {
         return response.data;
       }
     } catch (error) {
       console.warn(`${this.platform}: Failed to load settings`, error);
     }
-    return {
-      autoImportSavedPages: false,
-      autoImportPaused: false,
-      suppressImportNotifications: true,
-      skipAIForImports: true
-    };
+    try {
+      const { settings } = await chrome.storage.local.get('settings');
+      if (settings) {
+        return { ...fallbackSettings, ...settings };
+      }
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to load settings from storage`, error);
+    }
+    return fallbackSettings;
   }
 
   shouldAutoImport() {
+    if (!this.pageMode && typeof this.detectPageMode === 'function') {
+      const detected = this.detectPageMode();
+      if (detected) {
+        this.pageMode = detected;
+      }
+    }
     return !!(
       this.pageMode &&
       this.pageMode !== 'feed' &&
@@ -367,6 +771,12 @@ class BasePlatformTracker {
   }
 
   triggerManualImport() {
+    if (!this.pageMode && typeof this.detectPageMode === 'function') {
+      const detected = this.detectPageMode();
+      if (detected) {
+        this.pageMode = detected;
+      }
+    }
     if (!this.pageMode || this.pageMode === 'feed') {
       return false;
     }
@@ -378,6 +788,11 @@ class BasePlatformTracker {
   }
 
   startAutoScrollImport(origin = 'overlay') {
+    if (!this.ensureExtensionContext()) {
+      this.ensureAutoScrollOverlay();
+      this.updateAutoScrollOverlay('Stopped', 'Extension reloaded. Refresh the page.', true);
+      return { started: false, reason: 'invalid_context' };
+    }
     const detectedMode = this.detectPageMode ? this.detectPageMode() : this.pageMode;
     if (detectedMode && detectedMode !== this.pageMode) {
       this.pageMode = detectedMode;
@@ -411,10 +826,13 @@ class BasePlatformTracker {
     this.autoScrollState.stopped = false;
     this.autoScrollState.completed = false;
     this.autoScrollState.importedCount = 0;
+    this.autoScrollState.savedPostsSkipped = 0;
     this.autoScrollState.startTime = Date.now();
     this.autoScrollState.lastScrollHeight = this.getScrollHeight();
     this.autoScrollState.noGrowthStreak = 0;
     this.autoScrollState.stepCount = 0;
+    this.autoScrollState.fastScrollMode = false;
+    this.autoScrollState.consecutiveSavedBatches = 0;
 
     this.ensureAutoScrollOverlay();
     this.updateAutoScrollOverlay('Running', 'Auto-scroll import started.');
@@ -436,7 +854,28 @@ class BasePlatformTracker {
     this.updateAutoScrollOverlay('Running', 'Auto-scroll import resumed.');
   }
 
-  stopAutoScrollImport(reason = 'stopped') {
+  restartAutoScrollImport() {
+    // Reset counters (keep dailyCount for daily limit tracking)
+    this.autoScrollState.importedCount = 0;
+    this.autoScrollState.savedPostsSkipped = 0;
+    this.autoScrollState.startTime = Date.now();
+    this.autoScrollState.noGrowthStreak = 0;
+    this.autoScrollState.stepCount = 0;
+    this.autoScrollState.fastScrollMode = false;
+    this.autoScrollState.consecutiveSavedBatches = 0;
+
+    // Restart auto-scroll
+    this.autoScrollState.running = true;
+    this.autoScrollState.paused = false;
+    this.autoScrollState.stopped = false;
+    this.autoScrollState.completed = false;
+
+    this.updateAutoScrollOverlay('Running', 'Auto-scroll restarted.');
+    this.bindAutoScrollInterrupts();
+    this.runAutoScrollLoop();
+  }
+
+  stopAutoScrollImport(reason = 'stopped', customHint = '') {
     if (!this.autoScrollState.running) return;
     this.autoScrollState.running = false;
     this.autoScrollState.paused = false;
@@ -445,30 +884,52 @@ class BasePlatformTracker {
     this.unbindAutoScrollInterrupts();
 
     const statusLabel = this.autoScrollState.completed ? 'Completed' : 'Stopped';
-    const hint = this.autoScrollState.completed ?
-      'Auto-scroll import completed.' :
-      'Auto-scroll import stopped.';
-    this.updateAutoScrollOverlay(statusLabel, hint, true);
+    this.updateAutoScrollOverlay(statusLabel, customHint || null, true);
+    console.log(`${this.platform}: Auto-scroll ${statusLabel} — imported: ${this.autoScrollState.importedCount}, skipped: ${this.autoScrollState.savedPostsSkipped}, reason: ${reason}`);
   }
 
   async runAutoScrollLoop() {
     this.autoScrollState.dailyCount = await this.getDailyAutoScrollCount();
 
+    // Load auto-scroll settings
+    try {
+      const settings = await this.loadSettings();
+      if (settings && settings.autoScrollLimit) {
+        const limit = Math.min(Math.max(1, parseInt(settings.autoScrollLimit) || 200), 200);
+        this.autoScrollState.maxItems = limit;
+        console.log(`${this.platform}: Auto-scroll limit set to ${limit} from settings`);
+      }
+      // Load fast scroll setting (default enabled)
+      this.fastScrollEnabled = settings?.enableFastScroll !== false;
+      console.log(`${this.platform}: Fast scroll mode ${this.fastScrollEnabled ? 'enabled' : 'disabled'}`);
+    } catch (error) {
+      console.warn(`${this.platform}: Failed to load auto-scroll settings, using defaults`);
+      this.fastScrollEnabled = true; // Default to enabled
+    }
+
     while (this.autoScrollState.running) {
+      if (!this.ensureExtensionContext()) {
+        this.stopAutoScrollImport('stopped');
+        this.updateAutoScrollOverlay('Stopped', 'Extension reloaded. Refresh the page.', true);
+        break;
+      }
       if (this.autoScrollState.paused) {
         await new Promise(resolve => setTimeout(resolve, 300));
         continue;
       }
 
       const elapsed = Date.now() - this.autoScrollState.startTime;
-      if (this.autoScrollState.importedCount >= this.autoScrollState.maxItems) {
+      const totalProcessed = this.autoScrollState.importedCount + this.autoScrollState.savedPostsSkipped;
+      if (totalProcessed >= this.autoScrollState.maxItems) {
+        console.log(`${this.platform}: Auto-scroll completed — saved ${this.autoScrollState.importedCount}, skipped ${this.autoScrollState.savedPostsSkipped}, total ${totalProcessed}/${this.autoScrollState.maxItems}`);
         this.stopAutoScrollImport('completed');
         break;
       }
-      if (elapsed >= this.autoScrollState.maxDurationMs) {
-        this.stopAutoScrollImport('completed');
-        break;
-      }
+      // Removed: Time duration limit - auto-scroll should only stop on item limit or manual stop
+      // if (elapsed >= this.autoScrollState.maxDurationMs) {
+      //   this.stopAutoScrollImport('completed');
+      //   break;
+      // }
       if (this.autoScrollState.dailyCount >= this.autoScrollState.dailyLimit) {
         this.updateAutoScrollOverlay('Completed', 'Daily limit reached.', true);
         this.stopAutoScrollImport('completed');
@@ -478,7 +939,15 @@ class BasePlatformTracker {
       const scrollContainer = this.getScrollContainer();
       const beforeHeight = this.getScrollHeight(scrollContainer);
       const beforeTop = this.getScrollTop(scrollContainer);
-      const stepRatio = this.randomBetween(0.45, 0.85);
+
+      // Check if fast scroll mode is active AND enabled in settings
+      const useFastScroll = this.autoScrollState.fastScrollMode && this.fastScrollEnabled;
+
+      // Adjust scroll speed
+      const stepRatio = useFastScroll
+        ? this.randomBetween(1.2, 1.8)  // Fast: scroll 1.2-1.8 screen heights
+        : this.randomBetween(0.45, 0.85);  // Normal: 0.45-0.85 screen heights
+
       const stepSize = Math.max(200, Math.floor(window.innerHeight * stepRatio));
       this.scrollByAmount(scrollContainer, stepSize);
       const immediateTop = this.getScrollTop(scrollContainer);
@@ -487,30 +956,75 @@ class BasePlatformTracker {
         window.scrollBy(0, stepSize);
       }
 
-      const stepDelay = this.randomBetween(800, 2500);
+      // Adjust delay
+      const stepDelay = useFastScroll
+        ? this.randomBetween(300, 600)  // Fast: 300-600ms
+        : this.randomBetween(800, 2500);  // Normal: 800-2500ms
+
       await new Promise(resolve => setTimeout(resolve, stepDelay));
 
-      const captured = await this.bulkCaptureVisiblePosts({
+      const result = await this.bulkCaptureVisiblePosts({
         force: true,
-        suppressSummary: true
+        suppressSummary: true,
+        returnDetails: true
       });
+
+      const captured = result.captured || 0;
+      const skipped = result.skipped || 0;
+
       if (captured > 0) {
         this.autoScrollState.importedCount += captured;
         this.autoScrollState.dailyCount += captured;
         await this.incrementDailyAutoScrollCount(captured);
       }
 
+      if (skipped > 0) {
+        this.autoScrollState.savedPostsSkipped += skipped;
+      }
+
+      const totalProcessedSoFar = this.autoScrollState.importedCount + this.autoScrollState.savedPostsSkipped;
+
+      // Fast scroll mode detection
+      if (captured === 0 && skipped > 0) {
+        // All posts were saved
+        this.autoScrollState.consecutiveSavedBatches++;
+
+        if (this.autoScrollState.consecutiveSavedBatches >= 2 && !this.autoScrollState.fastScrollMode) {
+          this.autoScrollState.fastScrollMode = true;
+          console.log(`${this.platform}: ⚡ Fast scroll mode ENABLED`);
+        }
+      } else if (captured > 0) {
+        // Found new posts - disable fast scroll
+        if (this.autoScrollState.fastScrollMode) {
+          console.log(`${this.platform}: Fast scroll mode DISABLED - found new content`);
+        }
+        this.autoScrollState.fastScrollMode = false;
+        this.autoScrollState.consecutiveSavedBatches = 0;
+      }
+
       const afterHeight = this.getScrollHeight(scrollContainer);
       const afterTop = this.getScrollTop(scrollContainer);
-      if (afterHeight <= beforeHeight + 10 && afterTop <= beforeTop + 5) {
+
+      // Only count as "no growth" if page didn't grow AND we found no posts
+      // If we found posts (even if all were skipped/saved), keep scrolling
+      const totalPostsFound = captured + skipped;
+      const pageDidNotGrow = afterHeight <= beforeHeight + 10 && afterTop <= beforeTop + 5;
+
+      if (pageDidNotGrow && totalPostsFound === 0) {
         this.autoScrollState.noGrowthStreak += 1;
+        if (this.autoScrollState.noGrowthStreak === 1) {
+          if (scrollContainer === document.body ||
+            scrollContainer === document.documentElement ||
+            scrollContainer === document.scrollingElement) {
+            this.autoScrollContainer = null;
+          }
+        }
       } else {
         this.autoScrollState.noGrowthStreak = 0;
       }
 
       this.updateAutoScrollOverlay(
-        this.autoScrollState.paused ? 'Paused' : 'Running',
-        `Imported ${this.autoScrollState.importedCount} items`
+        this.autoScrollState.paused ? 'Paused' : 'Running'
       );
 
       this.autoScrollState.stepCount += 1;
@@ -519,10 +1033,12 @@ class BasePlatformTracker {
         await new Promise(resolve => setTimeout(resolve, this.randomBetween(3000, 8000)));
       }
 
-      if (this.autoScrollState.noGrowthStreak >= this.autoScrollState.minNoGrowthChecks) {
-        this.stopAutoScrollImport('completed');
-        break;
-      }
+      // Removed: No growth streak stop - auto-scroll should continue until limit or manual stop
+      // Pages may appear finished but have more content further down
+      // if (this.autoScrollState.noGrowthStreak >= this.autoScrollState.minNoGrowthChecks) {
+      //   this.stopAutoScrollImport('completed');
+      //   break;
+      // }
     }
   }
 
@@ -566,6 +1082,7 @@ class BasePlatformTracker {
   }
 
   async getDailyAutoScrollCount() {
+    if (!this.ensureExtensionContext()) return 0;
     const today = new Date().toISOString().slice(0, 10);
     return new Promise((resolve) => {
       chrome.storage.local.get('autoScrollDailyCount', (result) => {
@@ -580,6 +1097,7 @@ class BasePlatformTracker {
   }
 
   async incrementDailyAutoScrollCount(delta) {
+    if (!this.ensureExtensionContext()) return;
     const today = new Date().toISOString().slice(0, 10);
     return new Promise((resolve) => {
       chrome.storage.local.get('autoScrollDailyCount', (result) => {
@@ -601,6 +1119,11 @@ class BasePlatformTracker {
     }
 
     const candidates = [];
+    const isDocumentScroller = (el) => (
+      el === document.scrollingElement ||
+      el === document.documentElement ||
+      el === document.body
+    );
     const isScrollableElement = (el) => {
       if (!el || !(el instanceof Element)) return false;
       const style = window.getComputedStyle(el);
@@ -610,11 +1133,6 @@ class BasePlatformTracker {
       const scrollHeight = el.scrollHeight || 0;
       const hasSize = clientHeight >= 200;
       const contentTaller = scrollHeight - clientHeight > 10;
-      const isDocumentScroller = (
-        el === document.scrollingElement ||
-        el === document.documentElement ||
-        el === document.body
-      );
       const canScrollByTop = () => {
         if (!contentTaller) return false;
         const before = el.scrollTop;
@@ -631,6 +1149,23 @@ class BasePlatformTracker {
       if (!hasScroll && !canScrollByTop()) return false;
       return hasSize && contentTaller;
     };
+    const isLikelyScrollableElement = (el) => {
+      if (!el || !(el instanceof Element)) return false;
+      const style = window.getComputedStyle(el);
+      const overflowY = style.overflowY || '';
+      const hasScroll = overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay';
+      const clientHeight = el.clientHeight || 0;
+      const hasSize = clientHeight >= 200;
+      return hasScroll && hasSize;
+    };
+    const findScrollableAncestor = (el, allowLikely = false) => {
+      for (let node = el; node && node !== document.body; node = node.parentElement) {
+        if (isScrollableElement(node) || (allowLikely && isLikelyScrollableElement(node))) {
+          return node;
+        }
+      }
+      return null;
+    };
 
     const addIfScrollable = (el) => {
       if (!el) return;
@@ -641,10 +1176,29 @@ class BasePlatformTracker {
 
     if (typeof this.getScrollContainerOverride === 'function') {
       const override = this.getScrollContainerOverride();
-      if (override && isScrollableElement(override)) {
+      if (override && override instanceof Element && document.contains(override)) {
         this.autoScrollContainer = override;
         return this.autoScrollContainer;
       }
+    }
+
+    // Prefer an ancestor that contains actual posts, even if scroll height isn't ready yet.
+    try {
+      const postSelectors = typeof this.getPostContainerSelectors === 'function'
+        ? this.getPostContainerSelectors()
+        : [];
+      if (postSelectors && postSelectors.length > 0) {
+        const post = document.querySelector(postSelectors.join(','));
+        if (post) {
+          const ancestor = findScrollableAncestor(post) || findScrollableAncestor(post, true);
+          if (ancestor) {
+            this.autoScrollContainer = ancestor;
+            return this.autoScrollContainer;
+          }
+        }
+      }
+    } catch (error) {
+      // ignore
     }
 
     addIfScrollable(document.scrollingElement);
@@ -665,7 +1219,9 @@ class BasePlatformTracker {
 
     document.querySelectorAll(selector).forEach(el => addIfScrollable(el));
 
-    const best = candidates.reduce((acc, el) => {
+    const preferred = candidates.filter(el => !isDocumentScroller(el));
+    const pool = preferred.length > 0 ? preferred : candidates;
+    const best = pool.reduce((acc, el) => {
       const score = (el.scrollHeight || 0) - (el.clientHeight || 0);
       if (!acc) return el;
       const accScore = (acc.scrollHeight || 0) - (acc.clientHeight || 0);
@@ -750,10 +1306,17 @@ class BasePlatformTracker {
         case 'resume':
           this.resumeAutoScrollImport();
           break;
+        case 'restart':
+          this.restartAutoScrollImport();
+          break;
         case 'stop':
           this.stopAutoScrollImport('stopped');
           break;
         case 'close':
+          // Stop auto-scroll if running to prevent memory leak
+          if (this.autoScrollState.running) {
+            this.stopAutoScrollImport('stopped');
+          }
           overlay.remove();
           this.autoScrollOverlay = null;
           break;
@@ -773,7 +1336,7 @@ class BasePlatformTracker {
     const countEl = this.autoScrollOverlay.querySelector('.ct-auto-scroll-count');
     const hintEl = this.autoScrollOverlay.querySelector('.ct-auto-scroll-hint');
     const pauseBtn = this.autoScrollOverlay.querySelector('[data-action="pause"]');
-    const resumeBtn = this.autoScrollOverlay.querySelector('[data-action="resume"]');
+    const resumeRestartBtn = this.autoScrollOverlay.querySelector('[data-action="resume"], [data-action="restart"]');
     const stopBtn = this.autoScrollOverlay.querySelector('[data-action="stop"]');
 
     if (statusEl) {
@@ -783,17 +1346,38 @@ class BasePlatformTracker {
     }
 
     if (countEl) {
-      countEl.textContent = `Imported ${this.autoScrollState.importedCount} items`;
+      const total = this.autoScrollState.importedCount + this.autoScrollState.savedPostsSkipped;
+      countEl.textContent = `Total scrolled ${total} items / ${this.autoScrollState.maxItems}`;
     }
 
-    if (hintEl && hint) {
-      hintEl.textContent = hint;
+    if (hintEl) {
+      if (hint) {
+        hintEl.textContent = hint;
+      } else {
+        const fastIcon = this.autoScrollState.fastScrollMode ? '⚡ ' : '';
+        hintEl.textContent = `${fastIcon}Imported ${this.autoScrollState.importedCount} new items (Skipped ${this.autoScrollState.savedPostsSkipped} already-saved)`;
+      }
     }
 
-    if (pauseBtn && resumeBtn) {
+    // Swap Resume/Restart based on state
+    if (resumeRestartBtn) {
+      if (stopped) {
+        // Show Restart button when stopped/completed
+        resumeRestartBtn.setAttribute('data-action', 'restart');
+        resumeRestartBtn.textContent = 'Restart';
+        resumeRestartBtn.removeAttribute('disabled');
+      } else {
+        // Show Resume button when running
+        resumeRestartBtn.setAttribute('data-action', 'resume');
+        resumeRestartBtn.textContent = 'Resume';
+        const isPaused = this.autoScrollState.paused;
+        resumeRestartBtn.toggleAttribute('disabled', !isPaused);
+      }
+    }
+
+    if (pauseBtn) {
       const isPaused = this.autoScrollState.paused;
       pauseBtn.toggleAttribute('disabled', isPaused || stopped);
-      resumeBtn.toggleAttribute('disabled', !isPaused || stopped);
     }
 
     if (stopBtn) {
@@ -846,6 +1430,10 @@ class BasePlatformTracker {
 
   async isPostSaved(postElement) {
     const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
     const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
 
     if (this.savedStatusCache.has(contentKey)) {
@@ -853,27 +1441,81 @@ class BasePlatformTracker {
     }
 
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
-        contentKey
-      });
+      // Use local storage directly — fast and always available, no service worker needed
+      if (!chrome?.storage?.local) {
+        return false;
+      }
 
-      const saved = !!(response && response.success && response.data);
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+
+      let saved = false;
+      if (contentKey && interactionIndex && typeof interactionIndex === 'object' && interactionIndex[contentKey]) {
+        saved = true;
+      } else if (contentKey && Array.isArray(interactions) && interactions.length > 0) {
+        saved = interactions.some(item => item?.contentKey === contentKey);
+      }
+
       this.savedStatusCache.set(contentKey, saved);
       return saved;
     } catch (error) {
-      console.warn(`${this.platform}: Failed to check saved status`, error);
       return false;
     }
   }
 
-  async captureInteraction(type, postElement) {
+  async isPostFavorite(postElement) {
+    const content = this.extractContent(postElement);
+    const normalizedUrl = ContentExtractor.normalizeUrlForKey(content.url, this.platform);
+    if (normalizedUrl) {
+      content.url = normalizedUrl;
+    }
+    const contentKey = ContentExtractor.createContentKey(this.platform, content.url, content.text);
+    if (!contentKey) return false;
+
+    if (this.favoriteStatusCache.has(contentKey)) {
+      return this.favoriteStatusCache.get(contentKey);
+    }
+
     try {
+      // Use local storage directly — fast and always available, no service worker needed
+      if (!chrome?.storage?.local) {
+        return false;
+      }
+
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+
+      let favorited = false;
+      if (interactionIndex && typeof interactionIndex === 'object' && interactionIndex[contentKey]) {
+        const id = interactionIndex[contentKey];
+        const item = interactions.find(entry => entry?.id === id);
+        favorited = !!item?.isFavorite;
+      } else if (Array.isArray(interactions) && interactions.length > 0) {
+        const item = interactions.find(entry => entry?.contentKey === contentKey);
+        favorited = !!item?.isFavorite;
+      }
+
+      this.favoriteStatusCache.set(contentKey, favorited);
+      return favorited;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  async captureInteraction(type, postElement, options = {}) {
+    try {
+      if (!this.ensureExtensionContext()) {
+        throw new Error('Extension context invalidated');
+      }
       const postId = postElement.dataset.postId || this.generatePostId(postElement);
       const saveKey = `${postId}_${type}`;
       if (this.pendingSaves.has(saveKey)) {
         console.log(`${this.platform}: Already saving ${type} for post ${postId}`);
-        return;
+        return false;
       }
       this.pendingSaves.set(saveKey, true);
       console.log(`${this.platform}: Capturing ${type} interaction`);
@@ -902,64 +1544,62 @@ class BasePlatformTracker {
         aiProcessed: false,
         tags: [],
         notes: '',
-        isFavorite: false
+        isFavorite: options.isFavorite === true
       };
 
-      // Ensure service worker is active before sending message
-      let saveSuccess = false;
-      const MAX_RETRIES = 3;
+      // Use sendRuntimeMessageWithTimeout to handle MV3 service worker hibernation
+      try {
+        const response = await this.sendRuntimeMessageWithTimeout({
+          type: MESSAGE_TYPES.SAVE_INTERACTION,
+          data: interaction
+        });
 
-      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        try {
-          const response = await chrome.runtime.sendMessage({
-            type: MESSAGE_TYPES.SAVE_INTERACTION,
-            data: interaction
-          });
+        if (response && response.success) {
+          console.log(`${this.platform}: Successfully saved ${type} interaction`);
+          this.pendingSaves.delete(saveKey);
+          if (contentKey) {
+            this.savedStatusCache.set(contentKey, true);
+          }
+          if (options.isFavorite && contentKey) {
+            this.favoriteStatusCache.set(contentKey, true);
+          }
 
-          if (response && response.success) {
-            console.log(`${this.platform}: Successfully saved ${type} interaction`);
-            saveSuccess = true;
-            this.pendingSaves.delete(saveKey);
-
-            if (response.skippedDuplicate) {
-              console.log(`${this.platform}: Skipped duplicate ${type} interaction`);
-              if (type === 'save') {
-                this.handleDuplicateSave(contentKey, postElement);
-              }
-              return;
+          if (response.skippedDuplicate) {
+            console.log(`${this.platform}: Skipped duplicate ${type} interaction`);
+            if (type === 'save') {
+              this.handleDuplicateSave(contentKey, postElement);
             }
-
-            this.requestPreviewCapture(postElement, interaction.id);
-
-            // Show immediate success popup
-            if (window.statusPopupManager) {
-              window.statusPopupManager.show({
-                success: true,
-                saveSuccess: true,
-                interactionType: type,
-                platform: this.platform,
-                categories: ['Pending...'],
-                aiProcessed: false
-              });
-            }
-            return; // Success!
+            return true;
           }
 
-          if (attempt < MAX_RETRIES) {
-            // Wait before retry if context invalidated or other error
-            await new Promise(resolve => setTimeout(resolve, 500));
-            continue;
-          }
+          this.requestPreviewCapture(postElement, interaction.id);
 
-          throw new Error(response?.error || 'Unknown error');
-
-        } catch (error) {
-          if (attempt === MAX_RETRIES) {
-            throw error; // Throw on final failure
+          // Show immediate success popup (skip during auto-scroll — overlay shows the count)
+          if (window.statusPopupManager && !this.autoScrollState.running) {
+            window.statusPopupManager.show({
+              success: true,
+              saveSuccess: true,
+              interactionType: type,
+              platform: this.platform,
+              categories: ['Pending...'],
+              aiProcessed: false
+            });
           }
-          // Wait before retry
-          await new Promise(resolve => setTimeout(resolve, 500));
+          return true; // Success!
         }
+
+        throw new Error(response?.error || 'Unknown error');
+
+      } catch (saveError) {
+        // Try local storage fallback before giving up
+        const fallbackSaved = await this.saveInteractionFallback(interaction);
+        if (fallbackSaved) {
+          console.log(`${this.platform}: Saved ${type} interaction via fallback`);
+          this.pendingSaves.delete(saveKey);
+          if (contentKey) this.savedStatusCache.set(contentKey, true);
+          return true;
+        }
+        throw saveError;
       }
       this.pendingSaves.delete(saveKey);
     } catch (error) {
@@ -969,6 +1609,10 @@ class BasePlatformTracker {
       let errorMessage = error.message;
       if (error.message.includes('Extension context invalidated')) {
         errorMessage = 'Extension was updated. Please refresh the page.';
+        this.handleInvalidContext();
+      } else if (error.message.includes('Receiving end does not exist')) {
+        errorMessage = 'Extension was updated. Please refresh the page.';
+        this.handleInvalidContext();
       }
 
       // Show error popup with correct interaction type
@@ -983,13 +1627,15 @@ class BasePlatformTracker {
           aiFailureReason: errorMessage
         });
       }
+      return false;
     }
+    return false;
   }
 
   async handleDuplicateSave(contentKey, postElement) {
     try {
       if (!contentKey) return;
-      const existingResponse = await chrome.runtime.sendMessage({
+      const existingResponse = await this.sendRuntimeMessageWithTimeout({
         type: MESSAGE_TYPES.GET_INTERACTION_BY_KEY,
         contentKey
       });
@@ -1007,7 +1653,7 @@ class BasePlatformTracker {
       }
 
       if (Object.keys(updates).length > 0) {
-        await chrome.runtime.sendMessage({
+        await this.sendRuntimeMessageWithTimeout({
           type: MESSAGE_TYPES.UPDATE_INTERACTION,
           id: existing.id,
           updates
@@ -1018,16 +1664,18 @@ class BasePlatformTracker {
         this.requestPreviewCapture(postElement, existing.id);
       }
     } catch (error) {
-      console.warn(`${this.platform}: Failed to update duplicate save`, error);
+      // Silently ignore — duplicate save update is non-critical
     }
   }
 
   requestPreviewCapture(postElement, interactionId) {
     try {
       if (!postElement || !interactionId) return;
+      if (!this.ensureExtensionContext()) return;
       const rect = postElement.getBoundingClientRect();
       if (!rect || rect.width < 10 || rect.height < 10) return;
-      chrome.runtime.sendMessage({
+      // Fire-and-forget with silent error handling
+      this.sendRuntimeMessageWithTimeout({
         type: MESSAGE_TYPES.CAPTURE_POST_PREVIEW,
         interactionId,
         rect: {
@@ -1037,9 +1685,9 @@ class BasePlatformTracker {
           height: rect.height
         },
         dpr: window.devicePixelRatio || 1
-      });
+      }).catch(() => { /* preview capture is non-critical */ });
     } catch (error) {
-      console.warn(`${this.platform}: Preview capture failed`, error);
+      // Silently ignore — preview capture is non-critical
     }
   }
 
@@ -1067,16 +1715,17 @@ class BasePlatformTracker {
    * @returns {Promise<number>} The ID of the current tab
    */
   async getCurrentTabId() {
-    return new Promise((resolve) => {
-      chrome.runtime.sendMessage({ type: 'GET_CURRENT_TAB_ID' }, (response) => {
-        if (response && response.success) {
-          resolve(response.tabId);
-        } else {
-          console.error('Failed to get current tab ID from background:', response?.error);
-          resolve(null);
-        }
-      });
-    });
+    try {
+      const response = await this.sendRuntimeMessageWithTimeout(
+        { type: 'GET_CURRENT_TAB_ID' }
+      );
+      if (response && response.success) {
+        return response.tabId;
+      }
+      return null;
+    } catch (error) {
+      return null;
+    }
   }
 
   getPostContainerSelectors() {
@@ -1122,31 +1771,50 @@ class BasePlatformTracker {
   async bulkCaptureVisiblePosts(options = {}) {
     const force = options.force === true;
     const suppressSummary = options.suppressSummary === true;
-    if (!force && !this.shouldAutoImport()) return 0;
+    const returnDetails = options.returnDetails === true; // New option for detailed return
+    if (!force && !this.shouldAutoImport()) return returnDetails ? { captured: 0, skipped: 0 } : 0;
+    if (!this.ensureExtensionContext()) return returnDetails ? { captured: 0, skipped: 0 } : 0;
     this.cancelBulkCapture();
 
     console.log(`${this.platform}: Bulk capturing visible posts from ${this.pageMode} page`);
 
     const selectors = this.getPostContainerSelectors();
-    if (!selectors || selectors.length === 0) return 0;
+    console.log(`${this.platform}: Using selectors`, selectors);
+    if (!selectors || selectors.length === 0) return returnDetails ? { captured: 0, skipped: 0 } : 0;
 
     const posts = ContentExtractor.findAllWithFallback(document, selectors);
     console.log(`${this.platform}: Found ${posts.length} posts to potentially capture`);
 
     let capturedCount = 0;
+    let skippedCount = 0;
     const interactionType = this.getInteractionTypeForPageMode();
 
     for (const post of posts) {
       try {
-        if (!this.isElementVisible(post)) continue;
+        const isVisible = this.isElementVisible(post);
+        // console.log(`${this.platform}: Post visibility check:`, isVisible, post); // Commented out to reduce noise, enable if needed
+        if (!isVisible) continue;
         const snapshot = this.buildImportSnapshot(post);
         const dedupKey = snapshot?.contentKey || this.generatePostId(post);
 
-        // Skip if already captured
-        if (this.capturedPostIds.has(dedupKey)) continue;
+        // Skip if already captured in this session
+        if (this.capturedPostIds.has(dedupKey)) {
+          skippedCount++;
+          continue;
+        }
+
+        // Check if post is already saved in storage (smart scrolling)
+        const alreadySaved = await this.isPostSaved(post);
+        if (alreadySaved) {
+          skippedCount++;
+          this.capturedPostIds.add(dedupKey); // Mark as processed to avoid rechecking
+          console.log(`${this.platform}: Skipping already-saved post`);
+          continue;
+        }
+
         this.capturedPostIds.add(dedupKey);
 
-        // Capture the post
+        // Only capture truly new posts
         const saved = await this.captureImportedInteraction(interactionType, post, snapshot);
         if (saved) {
           capturedCount++;
@@ -1175,7 +1843,7 @@ class BasePlatformTracker {
       }
     }
 
-    return capturedCount;
+    return returnDetails ? { captured: capturedCount, skipped: skippedCount } : capturedCount;
   }
 
   buildImportSnapshot(postElement) {
@@ -1253,20 +1921,108 @@ class BasePlatformTracker {
       importedFrom: this.pageMode // Track where it was imported from
     };
 
-    // Send to service worker
+    // Send to service worker if available, otherwise fallback to local storage.
+    if (Date.now() < this.runtimeUnavailableUntil) {
+      const fallbackSaved = await this.saveInteractionFallback(interaction);
+      if (fallbackSaved) {
+        console.log(`${this.platform}: Imported ${type} interaction (fallback)`);
+      }
+      return fallbackSaved;
+    }
+
     try {
-      const response = await chrome.runtime.sendMessage({
-        type: MESSAGE_TYPES.SAVE_INTERACTION,
-        data: interaction
-      });
+      const response = await this.sendRuntimeMessageWithTimeout(
+        {
+          type: MESSAGE_TYPES.SAVE_INTERACTION,
+          data: interaction
+        }
+      );
 
       if (response && response.success && !response.skippedDuplicate) {
         console.log(`${this.platform}: Imported ${type} interaction`);
+        const button = postElement?.querySelector?.('.ct-manual-save-btn');
+        if (button) {
+          this.setManualSaveButtonState(button, 'saved');
+        }
         return true;
       }
       return false;
     } catch (error) {
       console.error(`${this.platform}: Error saving imported interaction:`, error);
+      if (String(error?.message || '').includes('context invalidated') ||
+        String(error?.message || '').includes('Receiving end does not exist')) {
+        this.handleInvalidContext();
+      }
+      const fallbackSaved = await this.saveInteractionFallback(interaction);
+      if (fallbackSaved) {
+        console.log(`${this.platform}: Imported ${type} interaction (fallback)`);
+        const button = postElement?.querySelector?.('.ct-manual-save-btn');
+        if (button) {
+          this.setManualSaveButtonState(button, 'saved');
+        }
+      }
+      return fallbackSaved;
+    }
+  }
+
+  async saveInteractionFallback(interaction) {
+    try {
+      if (!this.ensureExtensionContext()) {
+        throw new Error('Extension context invalidated');
+      }
+      if (interaction?.categories && Array.isArray(interaction.categories)) {
+        const cleaned = interaction.categories
+          .map(cat => String(cat || '').trim())
+          .filter(Boolean);
+        interaction.categories = Array.from(new Set(cleaned)).slice(0, 3);
+      }
+
+      const { interactions = [], interactionIndex = {} } = await chrome.storage.local.get([
+        'interactions',
+        'interactionIndex'
+      ]);
+
+      let index = interactionIndex;
+      if (!index || typeof index !== 'object') {
+        index = {};
+      }
+      if (Object.keys(index).length === 0 && interactions.length > 0) {
+        interactions.forEach(item => {
+          if (item?.contentKey) {
+            index[item.contentKey] = item.id;
+          }
+        });
+      }
+
+      if (interaction.contentKey && index[interaction.contentKey]) {
+        return false;
+      }
+
+      interactions.unshift(interaction);
+      if (interaction.contentKey) {
+        index[interaction.contentKey] = interaction.id;
+      }
+
+      await chrome.storage.local.set({ interactions, interactionIndex: index });
+
+      // Best-effort metadata update (does not queue AI)
+      try {
+        const data = await chrome.storage.local.get(null);
+        const size = new Blob([JSON.stringify(data)]).size;
+        await chrome.storage.local.set({
+          metadata: {
+            lastSync: Date.now(),
+            totalInteractions: interactions.length,
+            storageUsed: size
+          }
+        });
+      } catch (error) {
+        console.warn(`${this.platform}: Failed to update metadata`, error);
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`${this.platform}: Fallback save failed`, error);
       return false;
     }
   }
@@ -1326,6 +2082,10 @@ class BasePlatformTracker {
     if (this.bulkCaptureTimeout) {
       clearTimeout(this.bulkCaptureTimeout);
       this.bulkCaptureTimeout = null;
+    }
+    if (this.manualSaveSweepInterval) {
+      clearInterval(this.manualSaveSweepInterval);
+      this.manualSaveSweepInterval = null;
     }
     this.trackedPosts.clear();
     this.pendingSaves.clear();

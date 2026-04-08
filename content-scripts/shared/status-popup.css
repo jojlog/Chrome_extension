@@ -16,7 +16,7 @@
   opacity: 0;
   visibility: hidden;
   transform: translateY(20px);
-  transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out, visibility 0.3s ease-in-out;
+  transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out, visibility 0.3s ease-in-out, bottom 0.3s ease-in-out;
   z-index: 2147483647 !important;
   pointer-events: auto;
 }
@@ -25,6 +25,12 @@
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
+}
+
+.ct-status-popup--dismissing {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(20px) scale(0.95);
 }
 
 .ct-status-popup--success {
